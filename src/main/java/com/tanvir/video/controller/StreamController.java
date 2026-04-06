@@ -1,12 +1,19 @@
 package com.tanvir.video.controller;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tanvir.video.model.StreamSession;
 import com.tanvir.video.service.StreamProcessingService;
 
@@ -15,9 +22,48 @@ import com.tanvir.video.service.StreamProcessingService;
 public class StreamController {
 
     private final StreamProcessingService processingService;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Value("${app.hls-dir}")
+    private String hlsDir;
 
     public StreamController(StreamProcessingService processingService) {
         this.processingService = processingService;
+    }
+
+    @GetMapping("/ground-truth")
+    public ResponseEntity<List<Map<String, Object>>> getGroundTruth(@RequestParam String clip) {
+        try {
+            // clip is like "samples/hls/01_goal_2_arsenal/master.m3u8" or just "01_goal_2_arsenal"
+            String clipName = clip.contains("/") ?
+                    Path.of(clip).getParent().getFileName().toString() : clip;
+            Path gtPath = Path.of(hlsDir, clipName, "ground_truth.json");
+
+            if (!Files.exists(gtPath)) {
+                return ResponseEntity.ok(List.of());
+            }
+
+            JsonNode root = objectMapper.readTree(gtPath.toFile());
+            JsonNode events = root.get("events");
+            if (events == null) return ResponseEntity.ok(List.of());
+
+            List<Map<String, Object>> result = new ArrayList<>();
+            for (JsonNode e : events) {
+                String label = e.get("label").asText();
+                if (List.of("Goal", "Penalty", "Red card", "Yellow card", "Shots on target")
+                        .contains(label)) {
+                    result.add(Map.of(
+                            "type", label,
+                            "offset_sec", e.get("offset_sec").asDouble(),
+                            "game_time", e.get("game_time").asText(),
+                            "team", e.get("team").asText()
+                    ));
+                }
+            }
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.ok(List.of());
+        }
     }
 
     @PostMapping

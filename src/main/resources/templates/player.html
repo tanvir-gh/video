@@ -47,6 +47,10 @@
                 <h6 class="text-uppercase text-secondary small fw-semibold px-3 pt-3 pb-2 mb-0">Detected Events</h6>
                 <ul class="list-unstyled px-2 pb-2 mb-0" id="detected-list"></ul>
             </div>
+            <div id="ground-truth-section" class="border-bottom border-secondary" style="display:none">
+                <h6 class="text-uppercase text-secondary small fw-semibold px-3 pt-3 pb-2 mb-0">Ground Truth</h6>
+                <ul class="list-unstyled px-2 pb-2 mb-0" id="ground-truth-list"></ul>
+            </div>
             <h6 class="text-uppercase text-secondary small fw-semibold px-3 pt-3 pb-2 mb-0">Clips</h6>
             <ul class="list-unstyled overflow-auto flex-grow-1 px-2" id="video-list">
                 <li th:each="name : ${videos}"
@@ -99,7 +103,9 @@
             var li = e.target.closest('li');
             if (li && li.dataset.src) {
                 playSource(li.dataset.src, li);
-                document.getElementById('stream-url').value = li.dataset.src.replace('/hls/', 'samples/hls/');
+                var fsPath = li.dataset.src.replace('/hls/', 'samples/hls/');
+                document.getElementById('stream-url').value = fsPath;
+                loadGroundTruth(fsPath);
                 startProcessing();
             }
         });
@@ -196,6 +202,31 @@
             }
             li.dataset.src = '/hls/' + currentSessionId + '/' + msg.clip + '/master.m3u8';
             list.appendChild(li);
+        }
+
+        function loadGroundTruth(clipPath) {
+            var gtList = document.getElementById('ground-truth-list');
+            var gtSection = document.getElementById('ground-truth-section');
+            gtList.innerHTML = '';
+            gtSection.style.display = 'none';
+
+            fetch('/api/streams/ground-truth?clip=' + encodeURIComponent(clipPath))
+            .then(function(r) { return r.json(); })
+            .then(function(events) {
+                if (!events.length) return;
+                gtSection.style.display = '';
+                events.forEach(function(ev) {
+                    var li = document.createElement('li');
+                    li.className = 'px-3 py-1 small text-secondary';
+                    var sec = ev.offset_sec;
+                    var timeStr = Math.floor(sec / 60) + ':' + ('0' + Math.floor(sec % 60)).slice(-2);
+                    var badgeColor = {Goal:'success', Penalty:'warning', 'Red card':'danger',
+                                      'Yellow card':'warning', 'Shots on target':'info'}[ev.type] || 'secondary';
+                    li.innerHTML = '<span class="badge bg-' + badgeColor + ' bg-opacity-50 me-1">' +
+                        ev.type + '</span>' + timeStr + ' <span class="text-secondary-emphasis">(' + ev.team + ')</span>';
+                    gtList.appendChild(li);
+                });
+            });
         }
     </script>
 </body>
