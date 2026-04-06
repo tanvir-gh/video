@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>HLS Player</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        body { background: #111; color: #eee; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 40px; }
+        video { max-width: 960px; width: 100%; background: #000; display: none; }
+        h1 { margin-bottom: 20px; }
+        .video-list { list-style: none; padding: 0; }
+        .video-list li { padding: 10px 20px; cursor: pointer; border: 1px solid #333; margin: 5px 0; border-radius: 4px; }
+        .video-list li:hover { background: #222; }
+    </style>
+</head>
+<body>
+    <h1>HLS Player</h1>
+
+    <ul class="video-list" id="video-list">
+        <li data-src="/hls/playlist.m3u8">Sample — 30s counter with audio</li>
+    </ul>
+
+    <video id="video" controls></video>
+
+    <script>
+        var video = document.getElementById('video');
+        var hls = null;
+
+        function playSource(src) {
+            // clean up previous session
+            if (hls) { hls.destroy(); }
+
+            video.style.display = 'block';
+
+            if (Hls.isSupported()) {
+                hls = new Hls();
+                hls.loadSource(src);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                    video.play();
+                });
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = src;
+                video.play();
+            }
+        }
+
+        document.getElementById('video-list').addEventListener('click', function(e) {
+            var li = e.target.closest('li');
+            if (li && li.dataset.src) {
+                playSource(li.dataset.src);
+            }
+        });
+    </script>
+</body>
+</html>
