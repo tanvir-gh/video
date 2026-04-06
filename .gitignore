@@ -45,5 +45,8 @@ samples/
 ### Secrets ###
 .env
 
+### Python ###
+__pycache__/
+
 ### SoccerNet dataset ###
 soccernet/
