@@ -48,5 +48,8 @@ samples/
 ### Python ###
 __pycache__/
 
+### Pipeline work directory ###
+work/
+
 ### SoccerNet dataset ###
 soccernet/
