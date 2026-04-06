@@ -167,7 +167,8 @@ public class StreamProcessingService {
         }
 
         // Skip if a newer window has been requested (stale request)
-        if (session.getTargetWindow() != windowIndex) {
+        // Only applies when target is explicitly set (web seek mode, not CLI sequential)
+        if (session.getTargetWindow() >= 0 && session.getTargetWindow() != windowIndex) {
             log.debug("Skipping stale window {} (target is {})", windowIndex, session.getTargetWindow());
             return "skipped";
         }
@@ -187,25 +188,39 @@ public class StreamProcessingService {
             eventCallback.accept("{\"type\":\"classifying\",\"window\":" + windowIndex +
                     ",\"timeRange\":\"" + timeRange + "\"}");
 
-            // Extract keyframes
+            // Step 1: Extract keyframes
+            long t0 = System.currentTimeMillis();
             List<Path> framePaths = classifierService.extractKeyframes(window.videoPath(), windowWorkDir);
-            List<String> base64Frames = classifierService.encodeFrames(framePaths);
+            long extractMs = System.currentTimeMillis() - t0;
 
-            // Optional whisper
+            // Step 2: Encode frames as base64
+            long t1 = System.currentTimeMillis();
+            List<String> base64Frames = classifierService.encodeFrames(framePaths);
+            long encodeMs = System.currentTimeMillis() - t1;
+
+            // Step 3: Optional whisper
+            long whisperMs = 0;
             String transcript = "";
             if (window.audioPath() != null) {
+                long t2 = System.currentTimeMillis();
                 transcript = classifierService.transcribeAudio(window.audioPath());
+                whisperMs = System.currentTimeMillis() - t2;
             }
 
-            // Build context from recent cached windows
+            // Step 4: Build context + classify
             String context = buildContext(session, windowIndex);
-
-            // Classify
+            long t3 = System.currentTimeMillis();
             ClassificationResult classification = classifierService.classify(base64Frames, transcript, context);
+            long llmMs = System.currentTimeMillis() - t3;
+
             session.getWindowCache().put(windowIndex, classification);
             session.incrementWindowsProcessed();
 
             long windowElapsed = System.currentTimeMillis() - windowStart;
+            long payloadKb = base64Frames.stream().mapToLong(String::length).sum() / 1024;
+            log.info("TIMING w{}: extract={}ms encode={}ms whisper={}ms llm={}ms TOTAL={}ms frames={} payload={}KB",
+                    windowIndex, extractMs, encodeMs, whisperMs, llmMs, windowElapsed,
+                    framePaths.size(), payloadKb);
 
             // Update running context
             if (classification.events().isEmpty()) {

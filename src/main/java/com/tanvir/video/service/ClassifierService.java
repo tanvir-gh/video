@@ -55,31 +55,61 @@ public class ClassifierService {
         int count = detectionProps.keyframeCount();
         int duration = detectionProps.windowDuration();
         int width = detectionProps.keyframeWidth();
-        List<Path> frames = new ArrayList<>();
 
+        // Single ffmpeg pass: decode the segment ONCE, output all N frames using select filter
+        // select='eq(n,F0)+eq(n,F1)+...' picks specific frame numbers in one decode
+        // Compute frame numbers based on the actual fps of the source
+
+        // Get source fps to compute exact frame numbers
+        ProcessBuilder probe = new ProcessBuilder(
+                "ffprobe", "-v", "quiet",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=avg_frame_rate",
+                "-of", "csv=p=0",
+                videoPath.toString()
+        );
+        probe.redirectErrorStream(true);
+        Process pp = probe.start();
+        String fpsStr = new String(pp.getInputStream().readAllBytes()).trim();
+        pp.waitFor();
+        // fpsStr like "25/1" or "30000/1001"
+        double sourceFps = 25.0; // sensible default
+        try {
+            String[] parts = fpsStr.split("/");
+            sourceFps = Double.parseDouble(parts[0]) / Double.parseDouble(parts[1]);
+        } catch (Exception e) { /* use default */ }
+
+        // Pick N evenly-spaced frame indexes across the middle of the segment
+        StringBuilder selectExpr = new StringBuilder();
         for (int i = 0; i < count; i++) {
-            // Evenly spaced, avoiding first/last 2 seconds
             double ts = 2.0 + (duration - 4.0) * i / (count - 1);
-            Path framePath = workDir.resolve(String.format("kf_%03d_%.0f.png", i, ts));
+            int frameNum = (int) (ts * sourceFps);
+            if (i > 0) selectExpr.append("+");
+            selectExpr.append("eq(n\\,").append(frameNum).append(")");
+        }
 
-            ProcessBuilder pb = new ProcessBuilder(
-                    "ffmpeg", "-y",
-                    "-i", videoPath.toString(),
-                    "-ss", String.valueOf(ts),
-                    "-frames:v", "1",
-                    "-vf", "scale=" + width + ":-1",
-                    framePath.toString()
-            );
-            pb.redirectErrorStream(true);
-            Process p = pb.start();
-            p.getInputStream().readAllBytes();
-            p.waitFor();
+        Path outputPattern = workDir.resolve("kf_%03d.png");
+        ProcessBuilder pb = new ProcessBuilder(
+                "ffmpeg", "-y",
+                "-i", videoPath.toString(),
+                "-vf", String.format("select='%s',scale=%d:-1", selectExpr, width),
+                "-vsync", "vfr",
+                "-vframes", String.valueOf(count),
+                outputPattern.toString()
+        );
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        p.getInputStream().readAllBytes();
+        p.waitFor();
 
+        List<Path> frames = new ArrayList<>();
+        for (int i = 1; i <= count; i++) {
+            Path framePath = workDir.resolve(String.format("kf_%03d.png", i));
             if (Files.exists(framePath) && Files.size(framePath) > 0) {
                 frames.add(framePath);
             }
         }
-        log.debug("Extracted {} keyframes from {}", frames.size(), videoPath.getFileName());
+        log.debug("Extracted {} keyframes (single pass, {} fps)", frames.size(), sourceFps);
         return frames;
     }
 
