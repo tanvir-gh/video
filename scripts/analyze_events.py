@@ -67,7 +67,7 @@ def load_events():
 
 
 def find_best_windows(halves, window_sec, top_n):
-    """Sliding window search for densest non-overlapping windows."""
+    """Sliding window search for densest windows with top events near the center."""
     candidates = []
 
     for (game, half), events in halves.items():
@@ -78,20 +78,35 @@ def find_best_windows(halves, window_sec, top_n):
         if dur is None:
             continue
 
-        # Slide in 30-second steps, skip first minute
-        for start in range(60, int(dur) - window_sec, 30):
+        # For each high-value event, build a window centered on it (with jitter so
+        # the event lands at 40-60% of the window, not exactly the center)
+        for e in events:
+            if e["weight"] < 4:  # only build windows around significant events
+                continue
+            # Place the event at ~50% of the window (offset = window_sec/2)
+            event_offset_in_window = window_sec * 0.5
+            start = max(60, int(e["position_sec"] - event_offset_in_window))
             end = start + window_sec
-            window_events = [e for e in events if start <= e["position_sec"] < end]
-            score = sum(e["weight"] for e in window_events)
-            if score > 0:
-                candidates.append({
-                    "game": game,
-                    "half": half,
-                    "start": start,
-                    "end": end,
-                    "score": score,
-                    "events": window_events,
-                })
+            if end > dur - 10:
+                continue
+
+            window_events = [ev for ev in events if start <= ev["position_sec"] < end]
+            score = sum(ev["weight"] for ev in window_events)
+
+            # Position bonus: top event should be near center (40-60% range)
+            top_event = max(window_events, key=lambda x: x["weight"])
+            top_pos_pct = (top_event["position_sec"] - start) / window_sec
+            if 0.4 <= top_pos_pct <= 0.6:
+                score *= 1.2  # 20% bonus for centered top event
+
+            candidates.append({
+                "game": game,
+                "half": half,
+                "start": start,
+                "end": end,
+                "score": score,
+                "events": window_events,
+            })
 
     # Sort by score descending
     candidates.sort(key=lambda x: -x["score"])
@@ -129,7 +144,7 @@ def main():
     print(f"=== Top {len(selected)} densest {args.window // 60}-minute windows ===\n")
     for i, s in enumerate(selected):
         game_short = s["game"].split("/")[-1][:50]
-        print(f"{i+1}. Score={s['score']:3d}  H{s['half']} "
+        print(f"{i+1}. Score={s['score']:5.1f}  H{s['half']} "
               f"{s['start']//60}:{s['start']%60:02d}–{s['end']//60}:{s['end']%60:02d}  "
               f"{game_short}")
         for e in sorted(s["events"], key=lambda x: x["position_sec"]):

@@ -254,10 +254,12 @@ public class ClassifierService {
             }
             List<ClassificationResult.Event> events = new ArrayList<>();
             for (JsonNode e : eventsNode) {
+                String reason = e.has("reason") ? e.get("reason").asText()
+                        : (e.has("description") ? e.get("description").asText() : "");
                 events.add(new ClassificationResult.Event(
                         e.get("type").asText(),
                         e.get("confidence").asDouble(),
-                        e.has("description") ? e.get("description").asText() : ""
+                        reason
                 ));
             }
             return new ClassificationResult(events);

@@ -204,7 +204,9 @@
                 case 'suppressed':
                     logEvent('Window ' + msg.window + ': suppressed ' + msg.event + ' (' + msg.reason + ')', 'log-triage'); break;
                 case 'event':
-                    logEvent('DETECTED: ' + msg.event + ' (confidence: ' + msg.confidence.toFixed(2) + ')', 'log-event');
+                    var ev_tr = msg.timeRange ? ' [' + msg.timeRange + ']' : '';
+                    var ev_desc = msg.description ? ' — ' + msg.description : '';
+                    logEvent(ev_tr + ' DETECTED: ' + msg.event + ' (' + msg.confidence.toFixed(2) + ')' + ev_desc, 'log-event');
                     addDetectedEvent(msg); break;
                 case 'low_confidence':
                     logEvent('Possible ' + msg.event + ' (conf: ' + msg.confidence.toFixed(2) + ')', 'log-triage'); break;

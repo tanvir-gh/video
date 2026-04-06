@@ -18,8 +18,13 @@ Commentary transcript: {transcript}
 
 IMPORTANT: If the score is the SAME as the previous window, there was NO goal. Do not report a goal unless the score actually changed.
 
+For each detected event, provide:
+- type: one of the event types above
+- confidence: 0.0-1.0
+- reason: 1-2 short sentences explaining what you saw in the frames that led to this detection (cite specific visual cues like "scoreboard shows 0-1 to 1-1", "referee holding yellow card at frame 3", "goalkeeper diving close-up behind net"). Be specific.
+
 Respond with JSON only, no markdown:
-{"events": [{"type": "goal", "confidence": 0.95, "description": "Score changed from 0-2 to 1-2, player celebrating"}]}
+{"events": [{"type": "goal", "confidence": 0.95, "reason": "Scoreboard changed from 0-2 to 1-2 between frames 2 and 7, player in red jersey on knees celebrating in frame 8"}]}
 
 If no key event, return: {"events": []}
 Set confidence below 0.5 if uncertain but still report it.
