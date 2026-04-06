@@ -73,30 +73,15 @@ public class TriageService {
         return framePath;
     }
 
-    public Path cropScoreboardRegion(Path imagePath, Path outputDir) throws Exception {
-        int[] region = props.parseScoreboardRegion();
-        Path cropped = outputDir.resolve("crop_" + imagePath.getFileName());
-        ProcessBuilder pb = new ProcessBuilder(
-                "ffmpeg", "-y",
-                "-i", imagePath.toString(),
-                "-vf", String.format("crop=%d:%d:%d:%d", region[2], region[3], region[0], region[1]),
-                cropped.toString()
-        );
-        pb.redirectErrorStream(true);
-        Process p = pb.start();
-        p.getInputStream().readAllBytes();
-        p.waitFor();
-        return cropped;
-    }
-
     public String runOcr(Path imagePath) throws Exception {
         ProcessBuilder pb = new ProcessBuilder(
-                "tesseract", imagePath.toString(), "stdout", "--psm", "7"
+                "tesseract", imagePath.toString(), "stdout", "--psm", "3"
         );
         pb.redirectErrorStream(true);
         Process p = pb.start();
         String output = new String(p.getInputStream().readAllBytes()).trim();
         p.waitFor();
+        log.debug("OCR result for {}: {}", imagePath.getFileName(), output.replace("\n", " | "));
         return output;
     }
 
@@ -116,10 +101,8 @@ public class TriageService {
         try {
             Path frameStart = extractKeyframe(videoPath, 0.5, workDir);
             Path frameEnd = extractKeyframe(videoPath, 4.0, workDir);
-            Path cropStart = cropScoreboardRegion(frameStart, workDir);
-            Path cropEnd = cropScoreboardRegion(frameEnd, workDir);
-            ocrBefore = runOcr(cropStart);
-            ocrAfter = runOcr(cropEnd);
+            ocrBefore = runOcr(frameStart);
+            ocrAfter = runOcr(frameEnd);
             scoreChanged = hasScoreboardChanged(ocrBefore, ocrAfter);
         } catch (Exception e) {
             log.warn("OCR failed for window {}: {}", windowIndex, e.getMessage());

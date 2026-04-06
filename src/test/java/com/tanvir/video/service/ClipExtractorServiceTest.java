@@ -19,7 +19,7 @@ class ClipExtractorServiceTest {
 
     @BeforeEach
     void setUp() {
-        var props = new DetectionProperties(2.0, "0,0,300,50", 0.7, 30, 15, "base", tempDir.toString());
+        var props = new DetectionProperties(2.0, 0.7, 30, 15, "base", tempDir.toString());
         clipExtractor = new ClipExtractorService(props);
     }
 

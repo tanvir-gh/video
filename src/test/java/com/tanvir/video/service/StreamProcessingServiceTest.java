@@ -23,7 +23,7 @@ class StreamProcessingServiceTest {
     void setUp() {
         Path workDir = tempDir.resolve("work");
         Path hlsDir = tempDir.resolve("hls");
-        var detectionProps = new DetectionProperties(2.0, "0,0,300,50", 0.7, 30, 15, "base", workDir.toString());
+        var detectionProps = new DetectionProperties(2.0, 0.7, 30, 15, "base", workDir.toString());
         var openRouterProps = new OpenRouterProperties(
                 "https://openrouter.ai/api/v1/chat/completions",
                 "qwen/qwen3.5-flash-02-23", "", false);

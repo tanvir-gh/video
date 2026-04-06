@@ -31,7 +31,7 @@ class PipelineIntegrationTest {
         Path workDir = tempDir.resolve("work");
         Path hlsDir = tempDir.resolve("hls");
         // Use 3-second windows so the tiny test video produces exactly 1 window
-        var detectionProps = new DetectionProperties(2.0, "0,0,300,50", 0.7, 3, 1, "base", workDir.toString());
+        var detectionProps = new DetectionProperties(2.0, 0.7, 3, 1, "base", workDir.toString());
         var openRouterProps = new OpenRouterProperties(
                 "https://openrouter.ai/api/v1/chat/completions",
                 "qwen/qwen3.5-flash-02-23", "", false);

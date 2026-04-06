@@ -22,7 +22,7 @@ class ClassifierServiceTest {
 
     @BeforeEach
     void setUp() {
-        var detectionProps = new DetectionProperties(2.0, "0,0,300,50", 0.7, 30, 15, "base", tempDir.toString());
+        var detectionProps = new DetectionProperties(2.0, 0.7, 30, 15, "base", tempDir.toString());
         var openRouterProps = new OpenRouterProperties(
                 "https://openrouter.ai/api/v1/chat/completions",
                 "qwen/qwen3.5-flash-02-23", "", false);

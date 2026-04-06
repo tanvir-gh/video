@@ -52,7 +52,6 @@ public class ClassifierService {
         ProcessBuilder pb = new ProcessBuilder(
                 "whisper", audioPath.toString(),
                 "--model", detectionProps.whisperModel(),
-                "--language", "en",
                 "--output_format", "json",
                 "--output_dir", outputDir.toString()
         );
@@ -72,10 +71,11 @@ public class ClassifierService {
         }
 
         JsonNode root = objectMapper.readTree(jsonPath.toFile());
-        if (root.has("text")) {
-            return root.get("text").asText();
-        }
-        return "";
+        String language = root.has("language") ? root.get("language").asText() : "unknown";
+        String text = root.has("text") ? root.get("text").asText() : "";
+        log.info("Whisper: language={}, text={}", language,
+                text.substring(0, Math.min(80, text.length())));
+        return text;
     }
 
     public String buildPrompt(String transcript, TriageResult triage) {
@@ -105,8 +105,8 @@ public class ClassifierService {
     }
 
     ClassificationResult callLlm(String prompt) {
+        long start = System.currentTimeMillis();
         try {
-            WebClient client = WebClient.create(openRouterProps.apiUrl());
             String requestBody = objectMapper.writeValueAsString(new java.util.LinkedHashMap<>() {{
                 put("model", openRouterProps.model());
                 put("messages", List.of(
@@ -115,13 +115,16 @@ public class ClassifierService {
                             put("content", prompt);
                         }}
                 ));
-                put("reasoning", new java.util.LinkedHashMap<>() {{
-                    put("effort", "none");
+                put("stream", false);
+                put("think", false);
+                put("options", new java.util.LinkedHashMap<>() {{
+                    put("num_predict", 200);
+                    put("temperature", 0.1);
                 }});
             }});
 
-            String response = client.post()
-                    .header("Authorization", "Bearer " + openRouterProps.apiKey())
+            String response = WebClient.create(openRouterProps.apiUrl())
+                    .post()
                     .header("Content-Type", "application/json")
                     .bodyValue(requestBody)
                     .retrieve()
@@ -129,10 +132,12 @@ public class ClassifierService {
                     .block();
 
             JsonNode root = objectMapper.readTree(response);
-            String content = root.at("/choices/0/message/content").asText();
+            String content = root.at("/message/content").asText();
+            log.info("LLM responded in {}ms: {}", System.currentTimeMillis() - start,
+                    content.substring(0, Math.min(120, content.length())));
             return parseResponse(content);
         } catch (Exception e) {
-            log.error("LLM call failed: {}", e.getMessage());
+            log.error("LLM call failed ({}ms): {}", System.currentTimeMillis() - start, e.getMessage());
             return new ClassificationResult(List.of());
         }
     }
