@@ -32,6 +32,7 @@ public class StreamSession {
     private final StringBuilder runningContext = new StringBuilder();
     private volatile String lastEventType = "";
     private volatile int lastEventWindow = -10;
+    private volatile int targetWindow = -1; // most recently requested window
 
     public record WindowInfo(Path videoPath, Path audioPath, int index) {}
 
@@ -74,5 +75,7 @@ public class StreamSession {
     public int getLastEventWindow() { return lastEventWindow; }
     public void setLastEventWindow(int window) { this.lastEventWindow = window; }
 
+    public int getTargetWindow() { return targetWindow; }
+    public void setTargetWindow(int window) { this.targetWindow = window; }
     public int getWindowCount() { return windows != null ? windows.size() : 0; }
 }

@@ -117,13 +117,19 @@
             if (li && li.dataset.src) { playSource(li.dataset.src, li); }
         });
 
-        // Auto-follow: when video plays, analyze the current window
+        // Auto-follow: when video plays, analyze the current window (debounced)
+        var seekDebounceTimer = null;
         video.addEventListener('timeupdate', function() {
             if (!currentSessionId || !sessionReady) return;
             var currentWindow = Math.floor(video.currentTime / 30);
             if (currentWindow !== lastSeekWindow && currentWindow >= 0) {
                 lastSeekWindow = currentWindow;
-                fetch('/api/streams/' + currentSessionId + '/seek?time=' + video.currentTime, {method: 'POST'});
+                // Debounce: wait 1s before requesting analysis
+                // If the user keeps scrubbing, only the final position triggers
+                if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
+                seekDebounceTimer = setTimeout(function() {
+                    fetch('/api/streams/' + currentSessionId + '/seek?time=' + video.currentTime, {method: 'POST'});
+                }, 1000);
             }
         });
 

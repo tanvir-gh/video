@@ -158,6 +158,7 @@ public class StreamController {
         }
 
         int windowIndex = (int) (time / 30); // 30s window duration
+        session.setTargetWindow(windowIndex);
 
         SseEmitter emitter = emitters.get(id);
         if (emitter == null) {

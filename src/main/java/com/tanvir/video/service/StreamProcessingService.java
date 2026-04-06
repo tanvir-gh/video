@@ -166,6 +166,12 @@ public class StreamProcessingService {
             return "cached";
         }
 
+        // Skip if a newer window has been requested (stale request)
+        if (session.getTargetWindow() != windowIndex) {
+            log.debug("Skipping stale window {} (target is {})", windowIndex, session.getTargetWindow());
+            return "skipped";
+        }
+
         StreamSession.WindowInfo window = session.getWindows().get(windowIndex);
 
         try {
