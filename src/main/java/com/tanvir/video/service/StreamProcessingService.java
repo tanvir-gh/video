@@ -64,9 +64,45 @@ public class StreamProcessingService {
         }
     }
 
-    public record WindowChunk(Path videoPath, Path audioPath, int index) {}
+    // ---- Segmentation (called once per session) ----
 
-    public List<WindowChunk> segmentStream(Path sourcePath, Path workDir) throws Exception {
+    @Async("pipelineExecutor")
+    public void prepareSession(String sessionId, Consumer<String> eventCallback) {
+        StreamSession session = sessions.get(sessionId);
+        if (session == null) return;
+
+        log.info("=== Preparing session {} ===", sessionId);
+        session.setStatus(StreamSession.Status.SEGMENTING);
+
+        try {
+            Path workDir = Path.of(props.workDir(), sessionId);
+            Files.createDirectories(workDir);
+            Path hlsOutput = Path.of(hlsDir, sessionId);
+            Files.createDirectories(hlsOutput);
+            Path sourcePath = Path.of(session.getStreamUrl());
+
+            session.setWorkDir(workDir);
+            session.setHlsOutput(hlsOutput);
+            session.setSourcePath(sourcePath);
+
+            eventCallback.accept("{\"type\":\"progress\",\"message\":\"Segmenting stream...\"}");
+            List<StreamSession.WindowInfo> windows = segmentStream(sourcePath, workDir);
+            session.setWindows(windows);
+
+            session.setStatus(StreamSession.Status.READY);
+            eventCallback.accept("{\"type\":\"ready\",\"windows\":" + windows.size() +
+                    ",\"windowDuration\":" + props.windowDuration() + "}");
+            log.info("Session {} ready: {} windows", sessionId, windows.size());
+
+        } catch (Exception e) {
+            log.error("Segmentation failed for session {}: {}", sessionId, e.getMessage(), e);
+            session.setStatus(StreamSession.Status.ERROR);
+            eventCallback.accept("{\"type\":\"error\",\"message\":\"" +
+                    e.getMessage().replace("\"", "'") + "\"}");
+        }
+    }
+
+    private List<StreamSession.WindowInfo> segmentStream(Path sourcePath, Path workDir) throws Exception {
         Files.createDirectories(workDir);
         int windowDuration = props.windowDuration();
 
@@ -90,10 +126,8 @@ public class StreamProcessingService {
                     ffmpegOutput.substring(Math.max(0, ffmpegOutput.length() - 300)));
         }
 
-        // Only extract audio if whisper is enabled
         boolean needAudio = props.whisperEnabled();
-
-        List<WindowChunk> windows = new ArrayList<>();
+        List<StreamSession.WindowInfo> windows = new ArrayList<>();
         for (int i = 0; ; i++) {
             Path videoChunk = workDir.resolve(String.format("window_%03d.ts", i));
             if (!Files.exists(videoChunk)) break;
@@ -113,143 +147,175 @@ public class StreamProcessingService {
                 audioProc.waitFor();
             }
 
-            windows.add(new WindowChunk(videoChunk, audioChunk, i));
+            windows.add(new StreamSession.WindowInfo(videoChunk, audioChunk, i));
         }
 
-        log.info("Segmented into {} windows (audio extraction: {})", windows.size(), needAudio);
+        log.info("Segmented into {} windows", windows.size());
         return windows;
     }
+
+    // ---- Single window processing (called on demand) ----
+
+    public String processWindow(String sessionId, int windowIndex, Consumer<String> eventCallback) {
+        StreamSession session = sessions.get(sessionId);
+        if (session == null || session.getWindows() == null) return "not_ready";
+        if (windowIndex < 0 || windowIndex >= session.getWindows().size()) return "out_of_range";
+
+        // Return cached result
+        if (session.isWindowCached(windowIndex)) {
+            return "cached";
+        }
+
+        StreamSession.WindowInfo window = session.getWindows().get(windowIndex);
+
+        try {
+            long windowStart = System.currentTimeMillis();
+            Path windowWorkDir = session.getWorkDir().resolve("w" + windowIndex);
+            Files.createDirectories(windowWorkDir);
+
+            int clipStartSec = windowIndex * props.windowDuration();
+            int clipEndSec = clipStartSec + props.windowDuration();
+            String timeRange = String.format("%d:%02d-%d:%02d",
+                    clipStartSec / 60, clipStartSec % 60, clipEndSec / 60, clipEndSec % 60);
+
+            eventCallback.accept("{\"type\":\"classifying\",\"window\":" + windowIndex +
+                    ",\"timeRange\":\"" + timeRange + "\"}");
+
+            // Extract keyframes
+            List<Path> framePaths = classifierService.extractKeyframes(window.videoPath(), windowWorkDir);
+            List<String> base64Frames = classifierService.encodeFrames(framePaths);
+
+            // Optional whisper
+            String transcript = "";
+            if (window.audioPath() != null) {
+                transcript = classifierService.transcribeAudio(window.audioPath());
+            }
+
+            // Build context from recent cached windows
+            String context = buildContext(session, windowIndex);
+
+            // Classify
+            ClassificationResult classification = classifierService.classify(base64Frames, transcript, context);
+            session.getWindowCache().put(windowIndex, classification);
+            session.incrementWindowsProcessed();
+
+            long windowElapsed = System.currentTimeMillis() - windowStart;
+
+            // Update running context
+            if (classification.events().isEmpty()) {
+                session.getRunningContext().append(
+                        String.format("Window %d [%s]: no events\n", windowIndex, timeRange));
+                eventCallback.accept("{\"type\":\"triage\",\"window\":" + windowIndex +
+                        ",\"candidate\":false,\"reason\":\"no events detected (" + windowElapsed + "ms)\"" +
+                        ",\"timeRange\":\"" + timeRange + "\"}");
+                return "quiet";
+            }
+
+            for (var ev : classification.events()) {
+                session.getRunningContext().append(
+                        String.format("Window %d [%s]: %s (conf=%.2f)\n",
+                                windowIndex, timeRange, ev.type(), ev.confidence()));
+            }
+
+            // Process detected events
+            for (ClassificationResult.Event event : classification.events()) {
+                if (event.confidence() < props.confidenceThreshold()) {
+                    eventCallback.accept("{\"type\":\"low_confidence\",\"event\":\"" +
+                            event.type() + "\",\"confidence\":" + event.confidence() +
+                            ",\"window\":" + windowIndex + "}");
+                    continue;
+                }
+
+                // Deduplicate consecutive windows
+                String eventType = event.type().toLowerCase();
+                if (eventType.equals(session.getLastEventType())
+                        && windowIndex - session.getLastEventWindow() <= 2) {
+                    eventCallback.accept("{\"type\":\"suppressed\",\"event\":\"" +
+                            event.type() + "\",\"window\":" + windowIndex +
+                            ",\"reason\":\"duplicate of window " + session.getLastEventWindow() + "\"}");
+                    continue;
+                }
+
+                session.setLastEventType(eventType);
+                session.setLastEventWindow(windowIndex);
+                session.incrementCandidatesFound();
+
+                double eventTime = windowIndex * props.windowDuration() + props.windowDuration() / 2.0;
+                String slug = String.format("%s_%03d_%s", sessionId, windowIndex,
+                        eventType.replace(" ", "_").replace("/", "_"));
+
+                clipExtractorService.extractClip(
+                        session.getSourcePath(), eventTime, props.windowDuration(), slug, session.getHlsOutput());
+
+                DetectedEvent detected = new DetectedEvent(
+                        event.type(), event.confidence(), event.description(),
+                        windowIndex, eventTime, slug, transcript);
+                session.addEvent(detected);
+
+                eventCallback.accept("{\"type\":\"event\",\"event\":\"" + event.type() +
+                        "\",\"confidence\":" + event.confidence() +
+                        ",\"clip\":\"" + slug +
+                        "\",\"timestamp\":" + eventTime +
+                        ",\"description\":\"" + event.description().replace("\"", "'") +
+                        "\",\"window\":" + windowIndex +
+                        ",\"timeRange\":\"" + timeRange +
+                        "\",\"elapsed\":" + windowElapsed + "}");
+            }
+
+            return "processed";
+
+        } catch (Exception e) {
+            log.error("Window {} failed: {}", windowIndex, e.getMessage(), e);
+            eventCallback.accept("{\"type\":\"error\",\"message\":\"Window " + windowIndex +
+                    " failed: " + e.getMessage().replace("\"", "'") + "\"}");
+            return "error";
+        }
+    }
+
+    private String buildContext(StreamSession session, int currentWindow) {
+        String context = session.getRunningContext().toString();
+        String[] lines = context.split("\n");
+        if (lines.length > 3) {
+            context = String.join("\n",
+                    java.util.Arrays.copyOfRange(lines, lines.length - 3, lines.length));
+        }
+        return context;
+    }
+
+    // ---- Sequential processing (for CLI/benchmark mode) ----
 
     @Async("pipelineExecutor")
     public void processStream(String sessionId, Consumer<String> eventCallback) {
         StreamSession session = sessions.get(sessionId);
-        if (session == null) {
-            log.warn("processStream called with unknown sessionId: {}", sessionId);
-            return;
-        }
+        if (session == null) return;
 
         log.info("=== Pipeline started for session {} ===", sessionId);
         log.info("Stream URL: {}", session.getStreamUrl());
 
         try {
+            // Segment first
             Path workDir = Path.of(props.workDir(), sessionId);
             Files.createDirectories(workDir);
             Path hlsOutput = Path.of(hlsDir, sessionId);
             Files.createDirectories(hlsOutput);
-
             Path sourcePath = Path.of(session.getStreamUrl());
 
+            session.setWorkDir(workDir);
+            session.setHlsOutput(hlsOutput);
+            session.setSourcePath(sourcePath);
+
             eventCallback.accept("{\"type\":\"progress\",\"message\":\"Segmenting stream...\"}");
-            List<WindowChunk> windows = segmentStream(sourcePath, workDir);
+            List<StreamSession.WindowInfo> windows = segmentStream(sourcePath, workDir);
+            session.setWindows(windows);
             eventCallback.accept("{\"type\":\"progress\",\"message\":\"" + windows.size() + " windows to analyze\"}");
 
-            // Track context across windows for LLM
-            StringBuilder runningContext = new StringBuilder();
-            String lastEventType = "";
-            int lastEventWindow = -10;
-
-            for (WindowChunk window : windows) {
+            // Process all windows sequentially
+            for (int i = 0; i < windows.size(); i++) {
                 if (session.getStatus() != StreamSession.Status.RUNNING) break;
-
-                long windowStart = System.currentTimeMillis();
-                Path windowWorkDir = workDir.resolve("w" + window.index());
-                Files.createDirectories(windowWorkDir);
-
-                int clipStartSec = window.index() * props.windowDuration();
-                int clipEndSec = clipStartSec + props.windowDuration();
-                String timeRange = String.format("%d:%02d-%d:%02d",
-                        clipStartSec / 60, clipStartSec % 60, clipEndSec / 60, clipEndSec % 60);
-
-                eventCallback.accept("{\"type\":\"classifying\",\"window\":" + window.index() +
-                        ",\"timeRange\":\"" + timeRange + "\"}");
-
-                // Extract keyframes
-                List<Path> framePaths = classifierService.extractKeyframes(window.videoPath(), windowWorkDir);
-                List<String> base64Frames = classifierService.encodeFrames(framePaths);
-
-                // Optional whisper transcript
-                String transcript = "";
-                if (window.audioPath() != null) {
-                    transcript = classifierService.transcribeAudio(window.audioPath());
-                }
-
-                // Build context from recent windows (last 3)
-                String context = runningContext.toString();
-                // Keep only last 3 entries
-                String[] contextLines = context.split("\n");
-                if (contextLines.length > 3) {
-                    context = String.join("\n",
-                            java.util.Arrays.copyOfRange(contextLines, contextLines.length - 3, contextLines.length));
-                }
-
-                // Classify with vision + optional transcript + context
-                ClassificationResult classification = classifierService.classify(base64Frames, transcript, context);
-                session.incrementWindowsProcessed();
-
-                long windowElapsed = System.currentTimeMillis() - windowStart;
-
-                // Update running context for next window
-                if (classification.events().isEmpty()) {
-                    runningContext.append(String.format("Window %d: no events detected\n", window.index()));
-                    eventCallback.accept("{\"type\":\"triage\",\"window\":" + window.index() +
-                            ",\"candidate\":false,\"reason\":\"no events detected (" + windowElapsed + "ms)\"" +
-                            ",\"timeRange\":\"" + timeRange + "\"}");
-                    continue;
-                } else {
-                    for (var ev : classification.events()) {
-                        runningContext.append(String.format("Window %d: %s (conf=%.2f) — %s\n",
-                                window.index(), ev.type(), ev.confidence(), ev.description()));
-                    }
-                }
-
-                for (ClassificationResult.Event event : classification.events()) {
-                    if (event.confidence() < props.confidenceThreshold()) {
-                        eventCallback.accept("{\"type\":\"low_confidence\",\"event\":\"" +
-                                event.type() + "\",\"confidence\":" + event.confidence() +
-                                ",\"window\":" + window.index() + "}");
-                        continue;
-                    }
-
-                    // Deduplicate: suppress same event type in consecutive windows (likely replay)
-                    String eventType = event.type().toLowerCase();
-                    if (eventType.equals(lastEventType) && window.index() - lastEventWindow <= 2) {
-                        log.info("Suppressed duplicate {} at window {} (previous at window {})",
-                                event.type(), window.index(), lastEventWindow);
-                        eventCallback.accept("{\"type\":\"suppressed\",\"event\":\"" +
-                                event.type() + "\",\"window\":" + window.index() +
-                                ",\"reason\":\"duplicate of window " + lastEventWindow + "\"}");
-                        continue;
-                    }
-
-                    lastEventType = eventType;
-                    lastEventWindow = window.index();
-                    session.incrementCandidatesFound();
-
-                    double eventTime = window.index() * props.windowDuration() + props.windowDuration() / 2.0;
-                    String slug = String.format("%s_%03d_%s", sessionId, window.index(),
-                            eventType.replace(" ", "_").replace("/", "_"));
-
-                    clipExtractorService.extractClip(
-                            sourcePath, eventTime, props.windowDuration(), slug, hlsOutput);
-
-                    DetectedEvent detected = new DetectedEvent(
-                            event.type(), event.confidence(), event.description(),
-                            window.index(), eventTime, slug, transcript);
-                    session.addEvent(detected);
-
-                    eventCallback.accept("{\"type\":\"event\",\"event\":\"" + event.type() +
-                            "\",\"confidence\":" + event.confidence() +
-                            ",\"clip\":\"" + slug +
-                            "\",\"timestamp\":" + eventTime +
-                            ",\"description\":\"" + event.description().replace("\"", "'") +
-                            "\",\"window\":" + window.index() +
-                            ",\"elapsed\":" + windowElapsed + "}");
-                }
+                processWindow(sessionId, i, eventCallback);
             }
 
-            if (session.getStatus() == StreamSession.Status.RUNNING) {
-                session.setStatus(StreamSession.Status.STOPPED);
-            }
+            session.setStatus(StreamSession.Status.STOPPED);
             eventCallback.accept("{\"type\":\"done\",\"events\":" + session.getDetectedEvents().size() +
                     ",\"windows\":" + session.getWindowsProcessed() +
                     ",\"candidates\":" + session.getCandidatesFound() + "}");

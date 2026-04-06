@@ -70,6 +70,8 @@
         var activeLi = null;
         var eventSource = null;
         var currentSessionId = null;
+        var lastSeekWindow = -1;
+        var sessionReady = false;
 
         function playSource(src, li) {
             if (qualityInterval) { clearInterval(qualityInterval); }
@@ -115,6 +117,16 @@
             if (li && li.dataset.src) { playSource(li.dataset.src, li); }
         });
 
+        // Auto-follow: when video plays, analyze the current window
+        video.addEventListener('timeupdate', function() {
+            if (!currentSessionId || !sessionReady) return;
+            var currentWindow = Math.floor(video.currentTime / 30);
+            if (currentWindow !== lastSeekWindow && currentWindow >= 0) {
+                lastSeekWindow = currentWindow;
+                fetch('/api/streams/' + currentSessionId + '/seek?time=' + video.currentTime, {method: 'POST'});
+            }
+        });
+
         function logEvent(text, cls) {
             var log = document.getElementById('event-log');
             var entry = document.createElement('div');
@@ -131,6 +143,8 @@
             }
             document.getElementById('event-log').innerHTML = '';
             document.getElementById('detected-list').innerHTML = '';
+            lastSeekWindow = -1;
+            sessionReady = false;
 
             var url = document.getElementById('stream-url').value.trim();
             if (!url) return;
@@ -178,6 +192,14 @@
                     addDetectedEvent(msg); break;
                 case 'low_confidence':
                     logEvent('Possible ' + msg.event + ' (conf: ' + msg.confidence.toFixed(2) + ')', 'log-triage'); break;
+                case 'ready':
+                    sessionReady = true;
+                    logEvent('Ready: ' + msg.windows + ' windows (' + msg.windowDuration + 's each). Seek or play to analyze.', 'log-progress');
+                    // Trigger analysis of current playback position
+                    if (video.currentTime > 0) {
+                        lastSeekWindow = -1; // force re-seek
+                    }
+                    break;
                 case 'progress':
                     logEvent(msg.message, 'log-progress'); break;
                 case 'error':

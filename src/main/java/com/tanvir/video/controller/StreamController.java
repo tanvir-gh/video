@@ -5,6 +5,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
@@ -23,6 +24,7 @@ public class StreamController {
 
     private final StreamProcessingService processingService;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final Map<String, SseEmitter> emitters = new ConcurrentHashMap<>();
 
     @Value("${app.hls-dir}")
     private String hlsDir;
@@ -34,7 +36,6 @@ public class StreamController {
     @GetMapping("/ground-truth")
     public ResponseEntity<List<Map<String, Object>>> getGroundTruth(@RequestParam String clip) {
         try {
-            // clip is like "samples/hls/01_goal_2_arsenal/master.m3u8" or just "01_goal_2_arsenal"
             String clipName = clip.contains("/") ?
                     Path.of(clip).getParent().getFileName().toString() : clip;
             Path gtPath = Path.of(hlsDir, clipName, "ground_truth.json");
@@ -107,9 +108,14 @@ public class StreamController {
         }
 
         processingService.stopSession(id);
+        emitters.remove(id);
         return ResponseEntity.ok(Map.of("status", "STOPPED"));
     }
 
+    /**
+     * SSE endpoint — prepares the session (segments the clip) and holds the connection
+     * open for seek-triggered window analysis events.
+     */
     @GetMapping(value = "/{id}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamEvents(@PathVariable String id) {
         StreamSession session = processingService.getSession(id);
@@ -119,20 +125,57 @@ public class StreamController {
             return emitter;
         }
 
-        SseEmitter emitter = new SseEmitter(0L);
+        SseEmitter emitter = new SseEmitter(0L); // no timeout
+        emitters.put(id, emitter);
+        emitter.onCompletion(() -> emitters.remove(id));
+        emitter.onTimeout(() -> emitters.remove(id));
 
-        processingService.processStream(session.getId(), message -> {
+        // Prepare session (segment the clip) — async
+        processingService.prepareSession(id, message -> {
             try {
                 emitter.send(SseEmitter.event().data(message));
-                // Close the emitter when pipeline is done
-                if (message.contains("\"type\":\"done\"") || message.contains("\"type\":\"error\"")) {
-                    emitter.complete();
-                }
             } catch (Exception e) {
-                emitter.completeWithError(e);
+                emitters.remove(id);
             }
         });
 
         return emitter;
+    }
+
+    /**
+     * Seek endpoint — triggers analysis of the window containing the given time.
+     * Called by the JS player on timeupdate events.
+     */
+    @PostMapping("/{id}/seek")
+    public ResponseEntity<Map<String, Object>> seekToTime(
+            @PathVariable String id, @RequestParam double time) {
+        StreamSession session = processingService.getSession(id);
+        if (session == null) {
+            return ResponseEntity.notFound().build();
+        }
+        if (session.getStatus() != StreamSession.Status.READY) {
+            return ResponseEntity.ok(Map.of("status", "not_ready"));
+        }
+
+        int windowIndex = (int) (time / 30); // 30s window duration
+
+        SseEmitter emitter = emitters.get(id);
+        if (emitter == null) {
+            return ResponseEntity.ok(Map.of("status", "no_emitter"));
+        }
+
+        // Process the window asynchronously
+        String result = processingService.processWindow(id, windowIndex, message -> {
+            try {
+                emitter.send(SseEmitter.event().data(message));
+            } catch (Exception e) {
+                // emitter may be closed
+            }
+        });
+
+        return ResponseEntity.ok(Map.of(
+                "status", result,
+                "window", windowIndex
+        ));
     }
 }

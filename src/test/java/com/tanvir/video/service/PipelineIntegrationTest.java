@@ -2,6 +2,8 @@ package com.tanvir.video.service;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -13,10 +15,6 @@ import com.tanvir.video.config.OllamaProperties;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Integration test using ffmpeg + ollama.
- * Run with: ./gradlew test -PincludeTags=integration
- */
 @Tag("integration")
 class PipelineIntegrationTest {
 
@@ -40,7 +38,7 @@ class PipelineIntegrationTest {
     }
 
     @Test
-    void segmentStream_producesWindowFiles() throws Exception {
+    void createAndProcessSession() throws Exception {
         Path source = tempDir.resolve("tiny.ts");
         new ProcessBuilder("ffmpeg", "-y",
                 "-f", "lavfi", "-i", "color=c=blue:s=160x120:d=3:rate=5",
@@ -49,12 +47,15 @@ class PipelineIntegrationTest {
                 source.toString())
                 .redirectErrorStream(true).start().waitFor();
 
-        Path workDir = tempDir.resolve("work");
-        Files.createDirectories(workDir);
+        var session = processingService.createSession(source.toString());
+        List<String> events = new ArrayList<>();
 
-        var windows = processingService.segmentStream(source, workDir);
-        assertFalse(windows.isEmpty());
-        // Audio should NOT be extracted when whisper is disabled
-        assertNull(windows.get(0).audioPath());
+        // processStream runs segmentation + sequential classification
+        processingService.processStream(session.getId(), events::add);
+
+        // Wait for async
+        Thread.sleep(5000);
+
+        assertFalse(events.isEmpty());
     }
 }

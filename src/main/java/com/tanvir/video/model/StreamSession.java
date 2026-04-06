@@ -1,13 +1,16 @@
 package com.tanvir.video.model;
 
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class StreamSession {
 
-    public enum Status { RUNNING, STOPPED, ERROR }
+    public enum Status { RUNNING, SEGMENTING, READY, STOPPED, ERROR }
 
     private final String id;
     private final String streamUrl;
@@ -17,6 +20,20 @@ public class StreamSession {
     private final AtomicInteger candidatesFound = new AtomicInteger();
     private final List<DetectedEvent> detectedEvents = new CopyOnWriteArrayList<>();
     private volatile Process ingestorProcess;
+
+    // Segmented windows and per-window result cache
+    private volatile List<WindowInfo> windows;
+    private final Map<Integer, ClassificationResult> windowCache = new ConcurrentHashMap<>();
+    private volatile Path workDir;
+    private volatile Path hlsOutput;
+    private volatile Path sourcePath;
+
+    // Context tracking across windows
+    private final StringBuilder runningContext = new StringBuilder();
+    private volatile String lastEventType = "";
+    private volatile int lastEventWindow = -10;
+
+    public record WindowInfo(Path videoPath, Path audioPath, int index) {}
 
     public StreamSession(String id, String streamUrl) {
         this.id = id;
@@ -38,4 +55,24 @@ public class StreamSession {
     public void addEvent(DetectedEvent event) { this.detectedEvents.add(event); }
     public Process getIngestorProcess() { return ingestorProcess; }
     public void setIngestorProcess(Process process) { this.ingestorProcess = process; }
+
+    public List<WindowInfo> getWindows() { return windows; }
+    public void setWindows(List<WindowInfo> windows) { this.windows = windows; }
+    public Map<Integer, ClassificationResult> getWindowCache() { return windowCache; }
+    public boolean isWindowCached(int index) { return windowCache.containsKey(index); }
+
+    public Path getWorkDir() { return workDir; }
+    public void setWorkDir(Path workDir) { this.workDir = workDir; }
+    public Path getHlsOutput() { return hlsOutput; }
+    public void setHlsOutput(Path hlsOutput) { this.hlsOutput = hlsOutput; }
+    public Path getSourcePath() { return sourcePath; }
+    public void setSourcePath(Path sourcePath) { this.sourcePath = sourcePath; }
+
+    public StringBuilder getRunningContext() { return runningContext; }
+    public String getLastEventType() { return lastEventType; }
+    public void setLastEventType(String type) { this.lastEventType = type; }
+    public int getLastEventWindow() { return lastEventWindow; }
+    public void setLastEventWindow(int window) { this.lastEventWindow = window; }
+
+    public int getWindowCount() { return windows != null ? windows.size() : 0; }
 }
