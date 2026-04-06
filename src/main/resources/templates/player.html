@@ -117,21 +117,31 @@
             if (li && li.dataset.src) { playSource(li.dataset.src, li); }
         });
 
-        // Auto-follow: when video plays, analyze the current window (debounced)
-        var seekDebounceTimer = null;
+        // Analyze window when user seeks (drag release) or playback crosses a boundary
+        var seeking = false;
+
+        video.addEventListener('seeking', function() { seeking = true; });
+
+        video.addEventListener('seeked', function() {
+            seeking = false;
+            requestWindowAnalysis();
+        });
+
         video.addEventListener('timeupdate', function() {
-            if (!currentSessionId || !sessionReady) return;
+            if (seeking) return; // don't fire during drag
             var currentWindow = Math.floor(video.currentTime / 30);
-            if (currentWindow !== lastSeekWindow && currentWindow >= 0) {
-                lastSeekWindow = currentWindow;
-                // Debounce: wait 1s before requesting analysis
-                // If the user keeps scrubbing, only the final position triggers
-                if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
-                seekDebounceTimer = setTimeout(function() {
-                    fetch('/api/streams/' + currentSessionId + '/seek?time=' + video.currentTime, {method: 'POST'});
-                }, 1000);
+            if (currentWindow !== lastSeekWindow) {
+                requestWindowAnalysis();
             }
         });
+
+        function requestWindowAnalysis() {
+            if (!currentSessionId || !sessionReady) return;
+            var currentWindow = Math.floor(video.currentTime / 30);
+            if (currentWindow === lastSeekWindow || currentWindow < 0) return;
+            lastSeekWindow = currentWindow;
+            fetch('/api/streams/' + currentSessionId + '/seek?time=' + video.currentTime, {method: 'POST'});
+        }
 
         function logEvent(text, cls) {
             var log = document.getElementById('event-log');
