@@ -74,6 +74,8 @@ public class StreamProcessingService {
         Files.createDirectories(workDir);
         int windowDuration = props.windowDuration();
 
+        log.info("Segmenting: {} (window={}s)", sourcePath, windowDuration);
+
         ProcessBuilder videoPb = new ProcessBuilder(
                 "ffmpeg", "-y",
                 "-i", sourcePath.toString(),
@@ -85,8 +87,12 @@ public class StreamProcessingService {
         );
         videoPb.redirectErrorStream(true);
         Process videoProc = videoPb.start();
-        videoProc.getInputStream().readAllBytes();
-        videoProc.waitFor();
+        String ffmpegOutput = new String(videoProc.getInputStream().readAllBytes());
+        int exitCode = videoProc.waitFor();
+        if (exitCode != 0) {
+            log.error("ffmpeg segment failed (exit {}): {}", exitCode,
+                    ffmpegOutput.substring(Math.max(0, ffmpegOutput.length() - 300)));
+        }
 
         List<WindowChunk> windows = new ArrayList<>();
         for (int i = 0; ; i++) {
@@ -115,7 +121,13 @@ public class StreamProcessingService {
     @Async("pipelineExecutor")
     public void processStream(String sessionId, Consumer<String> eventCallback) {
         StreamSession session = sessions.get(sessionId);
-        if (session == null) return;
+        if (session == null) {
+            log.warn("processStream called with unknown sessionId: {}", sessionId);
+            return;
+        }
+
+        log.info("=== Pipeline started for session {} ===", sessionId);
+        log.info("Stream URL: {}", session.getStreamUrl());
 
         try {
             Path workDir = Path.of(props.workDir(), sessionId);
@@ -124,6 +136,7 @@ public class StreamProcessingService {
             Files.createDirectories(hlsOutput);
 
             Path sourcePath = Path.of(session.getStreamUrl());
+            log.debug("Work dir: {}, HLS output: {}", workDir, hlsOutput);
 
             eventCallback.accept("{\"type\":\"progress\",\"message\":\"Segmenting stream...\"}");
             List<WindowChunk> windows = segmentStream(sourcePath, workDir);

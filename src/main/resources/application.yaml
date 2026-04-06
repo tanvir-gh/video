@@ -2,6 +2,10 @@ spring:
   application:
     name: video
 
+logging:
+  level:
+    com.tanvir.video: DEBUG
+
 app:
   hls-dir: ${user.dir}/samples/hls
   detection:

@@ -117,7 +117,14 @@
 
         document.getElementById('video-list').addEventListener('click', function(e) {
             var li = e.target.closest('li');
-            if (li && li.dataset.src) { playSource(li.dataset.src, li); }
+            if (li && li.dataset.src) {
+                playSource(li.dataset.src, li);
+                // Auto-process: convert /hls/name/master.m3u8 to filesystem path for pipeline
+                var hlsSrc = li.dataset.src;
+                var fsPath = hlsSrc.replace('/hls/', 'samples/hls/');
+                document.getElementById('stream-url').value = fsPath;
+                startProcessing();
+            }
         });
 
         document.getElementById('detected-list').addEventListener('click', function(e) {
@@ -136,6 +143,15 @@
         }
 
         function startProcessing() {
+            // Stop any previous session first
+            if (currentSessionId) {
+                fetch('/api/streams/' + currentSessionId, {method: 'DELETE'});
+                if (eventSource) { eventSource.close(); }
+            }
+            // Clear previous log and detected events
+            document.getElementById('event-log').innerHTML = '';
+            document.getElementById('detected-list').innerHTML = '';
+
             var url = document.getElementById('stream-url').value.trim();
             if (!url) return;
 

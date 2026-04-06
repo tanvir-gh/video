@@ -45,6 +45,9 @@ public class ClassifierService {
     }
 
     public String transcribeAudio(Path audioPath) throws Exception {
+        log.info("Whisper: transcribing {} (model={})", audioPath.getFileName(), detectionProps.whisperModel());
+        long start = System.currentTimeMillis();
+
         Path outputDir = audioPath.getParent();
         ProcessBuilder pb = new ProcessBuilder(
                 "whisper", audioPath.toString(),
@@ -57,6 +60,8 @@ public class ClassifierService {
         Process p = pb.start();
         p.getInputStream().readAllBytes();
         p.waitFor();
+
+        log.info("Whisper: completed in {}ms", System.currentTimeMillis() - start);
 
         String baseName = audioPath.getFileName().toString().replaceFirst("\\.[^.]+$", "");
         Path jsonPath = outputDir.resolve(baseName + ".json");
@@ -83,12 +88,19 @@ public class ClassifierService {
     }
 
     public ClassificationResult classify(TriageResult triage, String transcript) throws Exception {
+        String prompt = buildPrompt(transcript, triage);
+
         if (!openRouterProps.enabled()) {
-            log.info("LLM disabled — skipping classification for window {}", triage.windowIndex());
+            log.info("LLM disabled for window {} — would send prompt ({} chars):", triage.windowIndex(), prompt.length());
+            log.debug("Prompt preview: {}", prompt.substring(0, Math.min(200, prompt.length())));
+            log.info("Transcript: {}", transcript.isEmpty() ? "(empty)" : transcript.substring(0, Math.min(100, transcript.length())));
+            log.info("Triage signals: audio_rms={}, baseline={}, ocr_before='{}', ocr_after='{}'",
+                    String.format("%.4f", triage.audioRms()),
+                    String.format("%.4f", triage.baselineRms()),
+                    triage.ocrBefore(), triage.ocrAfter());
             return new ClassificationResult(List.of());
         }
 
-        String prompt = buildPrompt(transcript, triage);
         return callLlm(prompt);
     }
 
