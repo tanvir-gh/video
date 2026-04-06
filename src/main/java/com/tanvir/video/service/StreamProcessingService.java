@@ -155,7 +155,13 @@ public class StreamProcessingService {
                 Path windowWorkDir = workDir.resolve("w" + window.index());
                 Files.createDirectories(windowWorkDir);
 
-                eventCallback.accept("{\"type\":\"classifying\",\"window\":" + window.index() + "}");
+                int clipStartSec = window.index() * props.windowDuration();
+                int clipEndSec = clipStartSec + props.windowDuration();
+                String timeRange = String.format("%d:%02d-%d:%02d",
+                        clipStartSec / 60, clipStartSec % 60, clipEndSec / 60, clipEndSec % 60);
+
+                eventCallback.accept("{\"type\":\"classifying\",\"window\":" + window.index() +
+                        ",\"timeRange\":\"" + timeRange + "\"}");
 
                 // Extract keyframes
                 List<Path> framePaths = classifierService.extractKeyframes(window.videoPath(), windowWorkDir);
@@ -186,7 +192,8 @@ public class StreamProcessingService {
                 if (classification.events().isEmpty()) {
                     runningContext.append(String.format("Window %d: no events detected\n", window.index()));
                     eventCallback.accept("{\"type\":\"triage\",\"window\":" + window.index() +
-                            ",\"candidate\":false,\"reason\":\"no events detected (" + windowElapsed + "ms)\"}");
+                            ",\"candidate\":false,\"reason\":\"no events detected (" + windowElapsed + "ms)\"" +
+                            ",\"timeRange\":\"" + timeRange + "\"}");
                     continue;
                 } else {
                     for (var ev : classification.events()) {

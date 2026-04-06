@@ -164,11 +164,13 @@
         function handleStreamEvent(msg) {
             switch (msg.type) {
                 case 'triage':
-                    logEvent('Window ' + msg.window + ': ' + (msg.candidate ? 'CANDIDATE - ' : 'skip - ') + msg.reason,
+                    var tr = msg.timeRange ? ' [' + msg.timeRange + ']' : '';
+                    logEvent(tr + ' ' + (msg.candidate ? 'CANDIDATE - ' : 'skip - ') + msg.reason,
                              msg.candidate ? 'log-candidate' : 'log-triage');
                     break;
                 case 'classifying':
-                    logEvent('Window ' + msg.window + ': classifying...', 'log-classifying'); break;
+                    var cr = msg.timeRange ? ' [' + msg.timeRange + ']' : '';
+                    logEvent(cr + ' analyzing...', 'log-classifying'); break;
                 case 'suppressed':
                     logEvent('Window ' + msg.window + ': suppressed ' + msg.event + ' (' + msg.reason + ')', 'log-triage'); break;
                 case 'event':
