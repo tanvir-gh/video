@@ -38,3 +38,6 @@ out/
 
 ### Claude Code ###
 .claude/
+
+### Generated media ###
+samples/
