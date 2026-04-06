@@ -2,76 +2,58 @@
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>HLS Player</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #0a0a0a; color: #eee; font-family: system-ui, -apple-system, sans-serif; height: 100vh; display: flex; flex-direction: column; }
-        header { padding: 16px 24px; border-bottom: 1px solid #1a1a1a; flex-shrink: 0; display: flex; align-items: center; gap: 16px; }
-        header h1 { font-size: 18px; font-weight: 500; color: #ccc; }
-        .stream-input { display: flex; gap: 8px; margin-left: auto; }
-        .stream-input input { background: #1a1a1a; border: 1px solid #333; color: #eee; padding: 6px 12px; border-radius: 4px; width: 320px; font-size: 13px; }
-        .stream-input button { background: #2a4a2a; border: 1px solid #3a5a3a; color: #8c8; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-size: 13px; }
-        .stream-input button:hover { background: #3a5a3a; }
-        .stream-input button.stop { background: #4a2a2a; border-color: #5a3a3a; color: #c88; }
-        .stream-input button.stop:hover { background: #5a3a3a; }
-        .layout { display: flex; flex: 1; min-height: 0; }
-        .main-area { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-        .player-area { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; background: #000; min-height: 0; }
-        .player-area .placeholder { color: #444; font-size: 15px; }
-        video { width: 100%; max-height: 100%; display: none; border-radius: 4px; }
-        #quality { margin-top: 12px; font-size: 13px; color: #666; flex-shrink: 0; }
-        .event-log { height: 180px; border-top: 1px solid #1a1a1a; overflow-y: auto; padding: 8px 16px; font-family: monospace; font-size: 12px; flex-shrink: 0; }
-        .event-log .log-entry { padding: 2px 0; }
-        .event-log .triage { color: #666; }
-        .event-log .candidate { color: #cc6; }
-        .event-log .classifying { color: #6ac; }
-        .event-log .event-detected { color: #6c6; font-weight: bold; }
-        .event-log .error { color: #c66; }
-        .event-log .progress { color: #888; }
-        .sidebar { width: 280px; flex-shrink: 0; border-left: 1px solid #1a1a1a; display: flex; flex-direction: column; }
-        .sidebar h2 { font-size: 13px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; padding: 16px 16px 12px; flex-shrink: 0; }
-        .video-list { list-style: none; overflow-y: auto; flex: 1; padding: 0 8px 8px; }
-        .video-list li { padding: 10px 12px; cursor: pointer; border-radius: 6px; font-size: 14px; color: #bbb; margin-bottom: 2px; }
-        .video-list li:hover { background: #1a1a1a; color: #fff; }
-        .video-list li.active { background: #1a2a1a; color: #6c6; }
-        .badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 3px; margin-right: 6px; font-weight: 600; text-transform: uppercase; }
-        .badge-goal { background: #2a4a2a; color: #6c6; }
-        .badge-penalty { background: #4a3a2a; color: #ca6; }
-        .badge-red_card, .badge-red { background: #4a2a2a; color: #c66; }
-        .badge-yellow_card, .badge-yellow { background: #4a4a2a; color: #cc6; }
-        .badge-save, .badge-shot { background: #2a3a4a; color: #6ac; }
-        .detected-events { border-bottom: 1px solid #1a1a1a; }
+        body { background: #0a0a0a; height: 100vh; }
+        .player-area { background: #000; min-height: 300px; }
+        .event-log { height: 180px; overflow-y: auto; font-family: monospace; font-size: 12px; }
+        .log-triage { color: #6c757d; }
+        .log-candidate { color: #ffc107; }
+        .log-classifying { color: #0dcaf0; }
+        .log-event { color: #198754; font-weight: bold; }
+        .log-error { color: #dc3545; }
+        .log-progress { color: #adb5bd; }
+        .sidebar { min-width: 260px; max-width: 280px; }
+        video { display: none; }
     </style>
 </head>
-<body>
-    <header>
-        <h1>HLS Player</h1>
-        <div class="stream-input">
-            <input type="text" id="stream-url" placeholder="Stream URL or local path..." />
-            <button id="start-btn" onclick="startProcessing()">Process</button>
-            <button id="stop-btn" class="stop" style="display:none;" onclick="stopProcessing()">Stop</button>
-        </div>
-    </header>
+<body class="d-flex flex-column text-light" data-bs-theme="dark">
 
-    <div class="layout">
-        <div class="main-area">
-            <div class="player-area">
-                <span class="placeholder" id="placeholder">Select a clip to play</span>
-                <video id="video" controls></video>
-                <div id="quality"></div>
+    <nav class="navbar navbar-dark border-bottom border-secondary px-3">
+        <span class="navbar-brand mb-0 h6">HLS Player</span>
+        <div class="d-flex gap-2 ms-auto">
+            <input type="text" id="stream-url" class="form-control form-control-sm" style="width:320px"
+                   placeholder="Stream URL or local path..." />
+            <button id="start-btn" class="btn btn-sm btn-outline-success" onclick="startProcessing()">Process</button>
+            <button id="stop-btn" class="btn btn-sm btn-outline-danger d-none" onclick="stopProcessing()">Stop</button>
+        </div>
+    </nav>
+
+    <div class="d-flex flex-grow-1" style="min-height:0">
+        <div class="flex-grow-1 d-flex flex-column">
+            <div class="player-area flex-grow-1 d-flex align-items-center justify-content-center p-3">
+                <span id="placeholder" class="text-secondary">Select a clip to play</span>
+                <video id="video" class="w-100 rounded" style="max-height:100%" controls></video>
             </div>
-            <div class="event-log" id="event-log"></div>
+            <div id="quality" class="text-center text-secondary small py-1"></div>
+            <div class="event-log border-top border-secondary p-2" id="event-log"></div>
         </div>
 
-        <aside class="sidebar">
-            <div class="detected-events" id="detected-events">
-                <h2>Detected Events</h2>
-                <ul class="video-list" id="detected-list"></ul>
+        <aside class="sidebar border-start border-secondary d-flex flex-column">
+            <div id="detected-events" class="border-bottom border-secondary">
+                <h6 class="text-uppercase text-secondary small fw-semibold px-3 pt-3 pb-2 mb-0">Detected Events</h6>
+                <ul class="list-unstyled px-2 pb-2 mb-0" id="detected-list"></ul>
             </div>
-            <h2>Clips</h2>
-            <ul class="video-list" id="video-list">
-                <li th:each="name : ${videos}" th:data-src="'/hls/' + ${name} + '/master.m3u8'" th:text="${name}">video</li>
+            <h6 class="text-uppercase text-secondary small fw-semibold px-3 pt-3 pb-2 mb-0">Clips</h6>
+            <ul class="list-unstyled overflow-auto flex-grow-1 px-2" id="video-list">
+                <li th:each="name : ${videos}"
+                    th:data-src="'/hls/' + ${name} + '/master.m3u8'"
+                    th:text="${name}"
+                    class="px-3 py-2 rounded small text-light-emphasis"
+                    role="button">video</li>
             </ul>
         </aside>
     </div>
@@ -88,9 +70,9 @@
         function playSource(src, li) {
             if (qualityInterval) { clearInterval(qualityInterval); }
             if (hls) { hls.destroy(); }
-            if (activeLi) { activeLi.classList.remove('active'); }
+            if (activeLi) { activeLi.classList.remove('active', 'bg-success-subtle', 'text-success'); }
             activeLi = li;
-            if (li) { li.classList.add('active'); }
+            if (li) { li.classList.add('active', 'bg-success-subtle', 'text-success'); }
 
             placeholder.style.display = 'none';
             video.style.display = 'block';
@@ -99,9 +81,7 @@
                 hls = new Hls();
                 hls.loadSource(src);
                 hls.attachMedia(video);
-                hls.on(Hls.Events.MANIFEST_PARSED, function() {
-                    video.play();
-                });
+                hls.on(Hls.Events.MANIFEST_PARSED, function() { video.play(); });
                 var qualityDiv = document.getElementById('quality');
                 qualityInterval = setInterval(function() {
                     if (hls && hls.currentLevel >= 0 && hls.levels[hls.currentLevel]) {
@@ -119,10 +99,7 @@
             var li = e.target.closest('li');
             if (li && li.dataset.src) {
                 playSource(li.dataset.src, li);
-                // Auto-process: convert /hls/name/master.m3u8 to filesystem path for pipeline
-                var hlsSrc = li.dataset.src;
-                var fsPath = hlsSrc.replace('/hls/', 'samples/hls/');
-                document.getElementById('stream-url').value = fsPath;
+                document.getElementById('stream-url').value = li.dataset.src.replace('/hls/', 'samples/hls/');
                 startProcessing();
             }
         });
@@ -135,20 +112,17 @@
         function logEvent(text, cls) {
             var log = document.getElementById('event-log');
             var entry = document.createElement('div');
-            entry.className = 'log-entry ' + (cls || '');
-            var time = new Date().toLocaleTimeString();
-            entry.textContent = '[' + time + '] ' + text;
+            entry.className = cls || '';
+            entry.textContent = '[' + new Date().toLocaleTimeString() + '] ' + text;
             log.appendChild(entry);
             log.scrollTop = log.scrollHeight;
         }
 
         function startProcessing() {
-            // Stop any previous session first
             if (currentSessionId) {
                 fetch('/api/streams/' + currentSessionId, {method: 'DELETE'});
                 if (eventSource) { eventSource.close(); }
             }
-            // Clear previous log and detected events
             document.getElementById('event-log').innerHTML = '';
             document.getElementById('detected-list').innerHTML = '';
 
@@ -163,69 +137,56 @@
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 currentSessionId = data.id;
-                document.getElementById('start-btn').style.display = 'none';
-                document.getElementById('stop-btn').style.display = '';
-                logEvent('Started processing: ' + url, 'progress');
+                document.getElementById('start-btn').classList.add('d-none');
+                document.getElementById('stop-btn').classList.remove('d-none');
+                logEvent('Started processing: ' + url, 'log-progress');
 
                 eventSource = new EventSource('/api/streams/' + data.id + '/events');
-                eventSource.onmessage = function(e) {
-                    var msg = JSON.parse(e.data);
-                    handleStreamEvent(msg);
-                };
-                eventSource.onerror = function() {
-                    logEvent('Connection lost', 'error');
-                    eventSource.close();
-                };
+                eventSource.onmessage = function(e) { handleStreamEvent(JSON.parse(e.data)); };
+                eventSource.onerror = function() { logEvent('Connection lost', 'log-error'); eventSource.close(); };
             });
         }
 
         function stopProcessing() {
-            if (currentSessionId) {
-                fetch('/api/streams/' + currentSessionId, {method: 'DELETE'});
-            }
+            if (currentSessionId) { fetch('/api/streams/' + currentSessionId, {method: 'DELETE'}); }
             if (eventSource) { eventSource.close(); }
-            document.getElementById('start-btn').style.display = '';
-            document.getElementById('stop-btn').style.display = 'none';
-            logEvent('Stopped', 'progress');
+            document.getElementById('start-btn').classList.remove('d-none');
+            document.getElementById('stop-btn').classList.add('d-none');
+            logEvent('Stopped', 'log-progress');
         }
 
         function handleStreamEvent(msg) {
             switch (msg.type) {
                 case 'triage':
-                    if (msg.candidate) {
-                        logEvent('Window ' + msg.window + ': CANDIDATE - ' + msg.reason, 'candidate');
-                    } else {
-                        logEvent('Window ' + msg.window + ': skip - ' + msg.reason, 'triage');
-                    }
+                    logEvent('Window ' + msg.window + ': ' + (msg.candidate ? 'CANDIDATE - ' : 'skip - ') + msg.reason,
+                             msg.candidate ? 'log-candidate' : 'log-triage');
                     break;
                 case 'classifying':
-                    logEvent('Window ' + msg.window + ': sending to LLM...', 'classifying');
-                    break;
+                    logEvent('Window ' + msg.window + ': classifying...', 'log-classifying'); break;
                 case 'event':
-                    logEvent('DETECTED: ' + msg.event + ' (confidence: ' + msg.confidence.toFixed(2) + ')', 'event-detected');
-                    addDetectedEvent(msg);
-                    break;
+                    logEvent('DETECTED: ' + msg.event + ' (confidence: ' + msg.confidence.toFixed(2) + ')', 'log-event');
+                    addDetectedEvent(msg); break;
                 case 'low_confidence':
-                    logEvent('Possible ' + msg.event + ' (confidence: ' + msg.confidence.toFixed(2) + ' - below threshold)', 'triage');
-                    break;
+                    logEvent('Possible ' + msg.event + ' (conf: ' + msg.confidence.toFixed(2) + ')', 'log-triage'); break;
                 case 'progress':
-                    logEvent(msg.message, 'progress');
-                    break;
+                    logEvent(msg.message, 'log-progress'); break;
                 case 'error':
-                    logEvent('ERROR: ' + msg.message, 'error');
-                    break;
+                    logEvent('ERROR: ' + msg.message, 'log-error'); break;
                 case 'done':
-                    logEvent('Done: ' + msg.events + ' events from ' + msg.windows + ' windows (' + msg.candidates + ' candidates)', 'progress');
-                    stopProcessing();
-                    break;
+                    logEvent('Done: ' + msg.events + ' events, ' + msg.windows + ' windows, ' + msg.candidates + ' candidates', 'log-progress');
+                    stopProcessing(); break;
             }
         }
 
         function addDetectedEvent(msg) {
             var list = document.getElementById('detected-list');
             var li = document.createElement('li');
-            var badgeClass = 'badge-' + msg.event.replace(' ', '_').replace('/', '_');
-            li.innerHTML = '<span class="badge ' + badgeClass + '">' + msg.event + '</span>' +
+            li.className = 'px-3 py-2 rounded small';
+            li.setAttribute('role', 'button');
+            var badgeColor = {goal:'success', penalty:'warning', red_card:'danger', red:'danger',
+                              yellow_card:'warning', yellow:'warning', save:'info', shot:'info'}[
+                              msg.event.replace(' ', '_').replace('/', '_')] || 'secondary';
+            li.innerHTML = '<span class="badge bg-' + badgeColor + ' me-1">' + msg.event + '</span>' +
                            Math.floor(msg.timestamp / 60) + ':' + ('0' + Math.floor(msg.timestamp % 60)).slice(-2);
             li.dataset.src = '/hls/' + currentSessionId + '/' + msg.clip + '/master.m3u8';
             list.appendChild(li);

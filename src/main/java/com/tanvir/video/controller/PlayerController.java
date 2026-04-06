@@ -1,4 +1,4 @@
-package com.tanvir.video;
+package com.tanvir.video.controller;
 
 import java.io.IOException;
 import java.nio.file.Files;

@@ -28,7 +28,6 @@ public class StreamController {
         }
 
         StreamSession session = processingService.createSession(url);
-        processingService.processStream(session.getId(), message -> {});
 
         return ResponseEntity.ok(Map.of(
                 "id", session.getId(),
@@ -75,9 +74,14 @@ public class StreamController {
         }
 
         SseEmitter emitter = new SseEmitter(0L);
+
         processingService.processStream(session.getId(), message -> {
             try {
                 emitter.send(SseEmitter.event().data(message));
+                // Close the emitter when pipeline is done
+                if (message.contains("\"type\":\"done\"") || message.contains("\"type\":\"error\"")) {
+                    emitter.complete();
+                }
             } catch (Exception e) {
                 emitter.completeWithError(e);
             }
