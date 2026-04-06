@@ -5,32 +5,56 @@
     <title>HLS Player</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
-        body { background: #111; color: #eee; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 40px; }
-        video { max-width: 960px; width: 100%; background: #000; display: none; }
-        h1 { margin-bottom: 20px; }
-        .video-list { list-style: none; padding: 0; }
-        .video-list li { padding: 10px 20px; cursor: pointer; border: 1px solid #333; margin: 5px 0; border-radius: 4px; }
-        .video-list li:hover { background: #222; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0a0a0a; color: #eee; font-family: system-ui, -apple-system, sans-serif; height: 100vh; display: flex; flex-direction: column; }
+        header { padding: 16px 24px; border-bottom: 1px solid #1a1a1a; flex-shrink: 0; }
+        header h1 { font-size: 18px; font-weight: 500; color: #ccc; }
+        .layout { display: flex; flex: 1; min-height: 0; }
+        .player-area { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; background: #000; }
+        .player-area .placeholder { color: #444; font-size: 15px; }
+        video { width: 100%; max-height: 100%; display: none; border-radius: 4px; }
+        #quality { margin-top: 12px; font-size: 13px; color: #666; flex-shrink: 0; }
+        .sidebar { width: 280px; flex-shrink: 0; border-left: 1px solid #1a1a1a; display: flex; flex-direction: column; }
+        .sidebar h2 { font-size: 13px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; padding: 16px 16px 12px; flex-shrink: 0; }
+        .video-list { list-style: none; overflow-y: auto; flex: 1; padding: 0 8px 8px; }
+        .video-list li { padding: 10px 12px; cursor: pointer; border-radius: 6px; font-size: 14px; color: #bbb; margin-bottom: 2px; }
+        .video-list li:hover { background: #1a1a1a; color: #fff; }
+        .video-list li.active { background: #1a2a1a; color: #6c6; }
     </style>
 </head>
 <body>
-    <h1>HLS Player</h1>
+    <header><h1>HLS Player</h1></header>
 
-    <ul class="video-list" id="video-list">
-        <li th:each="name : ${videos}" th:data-src="'/hls/' + ${name} + '/master.m3u8'" th:text="${name}">video</li>
-    </ul>
+    <div class="layout">
+        <div class="player-area">
+            <span class="placeholder" id="placeholder">Select a clip to play</span>
+            <video id="video" controls></video>
+            <div id="quality"></div>
+        </div>
 
-    <video id="video" controls></video>
-    <div id="quality" style="margin-top: 10px; font-size: 14px; color: #888;"></div>
+        <aside class="sidebar">
+            <h2>Clips</h2>
+            <ul class="video-list" id="video-list">
+                <li th:each="name : ${videos}" th:data-src="'/hls/' + ${name} + '/master.m3u8'" th:text="${name}">video</li>
+            </ul>
+        </aside>
+    </div>
 
     <script>
         var video = document.getElementById('video');
+        var placeholder = document.getElementById('placeholder');
         var hls = null;
+        var qualityInterval = null;
+        var activeLi = null;
 
-        function playSource(src) {
-            // clean up previous session
+        function playSource(src, li) {
+            if (qualityInterval) { clearInterval(qualityInterval); }
             if (hls) { hls.destroy(); }
+            if (activeLi) { activeLi.classList.remove('active'); }
+            activeLi = li;
+            if (li) { li.classList.add('active'); }
 
+            placeholder.style.display = 'none';
             video.style.display = 'block';
 
             if (Hls.isSupported()) {
@@ -40,6 +64,13 @@
                 hls.on(Hls.Events.MANIFEST_PARSED, function() {
                     video.play();
                 });
+                var qualityDiv = document.getElementById('quality');
+                qualityInterval = setInterval(function() {
+                    if (hls && hls.currentLevel >= 0 && hls.levels[hls.currentLevel]) {
+                        var level = hls.levels[hls.currentLevel];
+                        qualityDiv.textContent = level.height + 'p \u00b7 ' + Math.round(level.bitrate / 1000) + ' kbps';
+                    }
+                }, 500);
             } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
                 video.src = src;
                 video.play();
@@ -49,18 +80,9 @@
         document.getElementById('video-list').addEventListener('click', function(e) {
             var li = e.target.closest('li');
             if (li && li.dataset.src) {
-                playSource(li.dataset.src);
+                playSource(li.dataset.src, li);
             }
         });
-
-        // Show current quality level
-        var qualityDiv = document.getElementById('quality');
-        setInterval(function() {
-            if (hls && hls.currentLevel >= 0 && hls.levels[hls.currentLevel]) {
-                var level = hls.levels[hls.currentLevel];
-                qualityDiv.textContent = 'Quality: ' + level.height + 'p (' + Math.round(level.bitrate / 1000) + ' kbps)';
-            }
-        }, 500);
     </script>
 </body>
 </html>

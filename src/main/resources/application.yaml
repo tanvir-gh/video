@@ -1,3 +1,6 @@
 spring:
   application:
     name: video
+
+app:
+  hls-dir: ${user.dir}/samples/hls
