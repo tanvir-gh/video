@@ -19,12 +19,36 @@ JPA, Kafka, and Docker Compose are in `build.gradle` as scaffolding for future u
 ./gradlew test -PincludeTags=integration  # Integration tests (needs ffmpeg+ollama)
 ./gradlew clean build        # Clean rebuild
 
-# CLI mode — process a clip directly
+# CLI mode — process a single clip directly
 ./gradlew bootRun --args="--pipeline.input=samples/hls/01_goal_2_arsenal/master.m3u8 --spring.main.web-application-type=none"
 
 # Override config on CLI
 ./gradlew bootRun --args="--pipeline.input=... --app.detection.keyframe-count=5 --app.ollama.model=qwen3.5:4b"
 ```
+
+## Benchmarking (REQUIRED for any pipeline change)
+
+**Every change to detection logic, prompts, model, or config MUST be benchmarked.**
+Results are persisted to PostgreSQL `benchmark_runs` table automatically.
+
+```bash
+# Benchmark a single clip (TP/FP/FN vs ground truth, persisted to DB)
+./gradlew bootRun --args="--pipeline.input=samples/hls/01_goal_2_arsenal/master.m3u8 --spring.main.web-application-type=none"
+
+# Benchmark all clips
+./gradlew bootRun --args="--pipeline.benchmark --spring.main.web-application-type=none"
+
+# Query benchmark history (postgres runs in docker via compose)
+docker exec video-postgres-1 psql -U myuser -d mydatabase -c \
+  "SELECT id, clip_name, model, keyframe_count, keyframe_width, tp, fp, fn, ROUND(precision_score::numeric, 2) AS p, ROUND(recall_score::numeric, 2) AS r, ROUND(f1_score::numeric, 2) AS f1, ROUND(total_time_sec::numeric, 1) AS time_s, git_sha FROM benchmark_runs ORDER BY run_at DESC LIMIT 20;"
+
+# Best F1 per clip
+docker exec video-postgres-1 psql -U myuser -d mydatabase -c \
+  "SELECT DISTINCT ON (clip_name) clip_name, model, keyframe_count, f1_score, git_sha FROM benchmark_runs ORDER BY clip_name, f1_score DESC, run_at DESC;"
+```
+
+**Workflow rule:** Before claiming a change improved the pipeline, run a benchmark
+and verify the new row in `benchmark_runs` shows the improvement vs the previous run.
 
 ## Prerequisites
 

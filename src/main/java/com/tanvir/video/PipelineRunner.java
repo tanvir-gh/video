@@ -19,8 +19,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tanvir.video.config.DetectionProperties;
 import com.tanvir.video.config.OllamaProperties;
+import com.tanvir.video.model.BenchmarkRun;
 import com.tanvir.video.model.DetectedEvent;
 import com.tanvir.video.model.StreamSession;
+import com.tanvir.video.repository.BenchmarkRunRepository;
 import com.tanvir.video.service.StreamProcessingService;
 
 /**
@@ -41,6 +43,7 @@ public class PipelineRunner implements ApplicationRunner {
     private final StreamProcessingService processingService;
     private final DetectionProperties detectionProps;
     private final OllamaProperties ollamaProps;
+    private final BenchmarkRunRepository benchmarkRunRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${app.hls-dir}")
@@ -48,10 +51,12 @@ public class PipelineRunner implements ApplicationRunner {
 
     public PipelineRunner(StreamProcessingService processingService,
                           DetectionProperties detectionProps,
-                          OllamaProperties ollamaProps) {
+                          OllamaProperties ollamaProps,
+                          BenchmarkRunRepository benchmarkRunRepository) {
         this.processingService = processingService;
         this.detectionProps = detectionProps;
         this.ollamaProps = ollamaProps;
+        this.benchmarkRunRepository = benchmarkRunRepository;
     }
 
     @Override
@@ -101,9 +106,14 @@ public class PipelineRunner implements ApplicationRunner {
 
         // Show ground truth comparison if available
         Path gtPath = path.getParent().resolve("ground_truth.json");
+        int[] tpFpFn = new int[]{0, 0, 0};
         if (Files.exists(gtPath)) {
-            compareToGroundTruth(session, gtPath);
+            tpFpFn = compareToGroundTruth(session, gtPath);
         }
+
+        // Persist benchmark result
+        persistBenchmark(path.getParent().getFileName().toString(),
+                tpFpFn[0], tpFpFn[1], tpFpFn[2], totalElapsed, session.getWindowsProcessed());
     }
 
     // ---- Benchmark all clips ----
@@ -159,6 +169,11 @@ public class PipelineRunner implements ApplicationRunner {
             totalTp += tpFpFn[0];
             totalFp += tpFpFn[1];
             totalFn += tpFpFn[2];
+
+            // Persist
+            persistBenchmark(clipDir.getFileName().toString(),
+                    tpFpFn[0], tpFpFn[1], tpFpFn[2],
+                    (long)(elapsed * 1000), session.getWindowsProcessed());
             log.info("");
         }
 
@@ -258,6 +273,53 @@ public class PipelineRunner implements ApplicationRunner {
     }
 
     private record GtEvent(String label, double offsetSec) {}
+
+    // ---- Persistence ----
+
+    private void persistBenchmark(String clipName, int tp, int fp, int fn,
+                                  long totalElapsedMs, int windowsProcessed) {
+        try {
+            BenchmarkRun run = new BenchmarkRun();
+            run.setClipName(clipName);
+            run.setModel(ollamaProps.model());
+            run.setKeyframeCount(detectionProps.keyframeCount());
+            run.setKeyframeWidth(detectionProps.keyframeWidth());
+            run.setWindowDuration(detectionProps.windowDuration());
+            run.setConfidenceThreshold(detectionProps.confidenceThreshold());
+            run.setWhisperEnabled(detectionProps.whisperEnabled());
+            run.setTp(tp);
+            run.setFp(fp);
+            run.setFn(fn);
+            double precision = tp + fp > 0 ? (double) tp / (tp + fp) : 0;
+            double recall = tp + fn > 0 ? (double) tp / (tp + fn) : 0;
+            double f1 = precision + recall > 0 ? 2 * precision * recall / (precision + recall) : 0;
+            run.setPrecision(precision);
+            run.setRecall(recall);
+            run.setF1(f1);
+            run.setTotalTimeSec(totalElapsedMs / 1000.0);
+            run.setWindowsProcessed(windowsProcessed);
+            run.setAvgWindowTimeMs(windowsProcessed > 0 ? (int) (totalElapsedMs / windowsProcessed) : 0);
+            run.setGitSha(getGitSha());
+
+            benchmarkRunRepository.save(run);
+            log.info("Benchmark persisted: {} (P={} R={} F1={})", clipName,
+                    String.format("%.2f", precision), String.format("%.2f", recall), String.format("%.2f", f1));
+        } catch (Exception e) {
+            log.warn("Failed to persist benchmark: {}", e.getMessage());
+        }
+    }
+
+    private String getGitSha() {
+        try {
+            Process p = new ProcessBuilder("git", "rev-parse", "--short", "HEAD")
+                    .redirectErrorStream(true).start();
+            String sha = new String(p.getInputStream().readAllBytes()).trim();
+            p.waitFor();
+            return sha.isEmpty() ? null : sha;
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
     // ---- Event logging ----
 
