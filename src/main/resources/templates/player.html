@@ -17,10 +17,11 @@
     <h1>HLS Player</h1>
 
     <ul class="video-list" id="video-list">
-        <li data-src="/hls/playlist.m3u8">Sample — 30s counter with audio</li>
+        <li th:each="name : ${videos}" th:data-src="'/hls/' + ${name} + '/master.m3u8'" th:text="${name}">video</li>
     </ul>
 
     <video id="video" controls></video>
+    <div id="quality" style="margin-top: 10px; font-size: 14px; color: #888;"></div>
 
     <script>
         var video = document.getElementById('video');
@@ -51,6 +52,15 @@
                 playSource(li.dataset.src);
             }
         });
+
+        // Show current quality level
+        var qualityDiv = document.getElementById('quality');
+        setInterval(function() {
+            if (hls && hls.currentLevel >= 0 && hls.levels[hls.currentLevel]) {
+                var level = hls.levels[hls.currentLevel];
+                qualityDiv.textContent = 'Quality: ' + level.height + 'p (' + Math.round(level.bitrate / 1000) + ' kbps)';
+            }
+        }, 500);
     </script>
 </body>
 </html>
