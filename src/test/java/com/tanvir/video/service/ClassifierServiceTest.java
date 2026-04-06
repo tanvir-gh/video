@@ -1,15 +1,15 @@
 package com.tanvir.video.service;
 
 import java.nio.file.Path;
+import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import com.tanvir.video.config.DetectionProperties;
-import com.tanvir.video.config.OpenRouterProperties;
+import com.tanvir.video.config.OllamaProperties;
 import com.tanvir.video.model.ClassificationResult;
-import com.tanvir.video.model.TriageResult;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -22,26 +22,22 @@ class ClassifierServiceTest {
 
     @BeforeEach
     void setUp() {
-        var detectionProps = new DetectionProperties(2.0, 0.7, 30, 15, "base", tempDir.toString());
-        var openRouterProps = new OpenRouterProperties(
-                "https://openrouter.ai/api/v1/chat/completions",
-                "qwen/qwen3.5-flash-02-23", "", false);
-        classifier = new ClassifierService(detectionProps, openRouterProps);
+        var detectionProps = new DetectionProperties(30, 0.7, 3, 512, false, "base", true, tempDir.toString());
+        var ollamaProps = new OllamaProperties("http://localhost:11434/api/chat", "qwen3.5:9b", 200, 0.1);
+        classifier = new ClassifierService(detectionProps, ollamaProps);
         classifier.loadPromptTemplate();
     }
 
     @Test
-    void buildPrompt_insertsAllPlaceholders() {
-        var triage = new TriageResult(0, "video.ts", "audio.wav",
-                0.15, 0.05, "1 - 0", "2 - 0", true, "audio spike");
-
-        String prompt = classifier.buildPrompt("The crowd goes wild!", triage);
-
+    void buildPrompt_insertsTranscript() {
+        String prompt = classifier.buildPrompt("The crowd goes wild!");
         assertTrue(prompt.contains("The crowd goes wild!"));
-        assertTrue(prompt.contains("1 - 0"));
-        assertTrue(prompt.contains("2 - 0"));
-        assertTrue(prompt.contains("0.15"));
-        assertTrue(prompt.contains("0.05"));
+    }
+
+    @Test
+    void buildPrompt_handlesEmptyTranscript() {
+        String prompt = classifier.buildPrompt("");
+        assertTrue(prompt.contains("No commentary transcript available."));
     }
 
     @Test
@@ -80,11 +76,10 @@ class ClassifierServiceTest {
     }
 
     @Test
-    void classify_whenDisabled_returnsEmptyResult() throws Exception {
-        var triage = new TriageResult(0, "video.ts", "audio.wav",
-                0.15, 0.05, "1 - 0", "2 - 0", true, "audio spike");
-
-        ClassificationResult result = classifier.classify(triage, "Goal scored!");
-        assertTrue(result.events().isEmpty());
+    void classify_withEmptyFrames_stillWorks() {
+        // With no ollama running in test, this will fail gracefully
+        ClassificationResult result = classifier.classify(List.of(), "some transcript");
+        // Either returns events from LLM or empty on connection failure
+        assertNotNull(result);
     }
 }

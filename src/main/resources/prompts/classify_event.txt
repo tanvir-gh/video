@@ -1,12 +1,7 @@
-You are a soccer match event detector. Analyze this 30-second window from a live broadcast.
+You are a soccer match event detector. Analyze the keyframes from a 30-second broadcast window.
 
-## Inputs
-- Commentary transcript: {transcript}
-- Scoreboard before: {ocr_before}
-- Scoreboard after: {ocr_after}
-- Audio energy level: {audio_rms} (baseline: {baseline_rms})
+Commentary transcript: {transcript}
 
-## Task
 Identify if any of these events occurred:
 - Goal
 - Penalty
@@ -14,8 +9,10 @@ Identify if any of these events occurred:
 - Yellow card
 - Key save / Shot on target
 
-## Response format (JSON only, no markdown)
-{"events": [{"type": "goal", "confidence": 0.95, "description": "Home team scores"}]}
+Look carefully at: scoreboard overlay (score changes, match time), player celebrations or reactions, referee actions (cards, pointing to spot), ball position (in net), camera angle (close-ups often follow key events).
+
+Respond with JSON only, no markdown:
+{"events": [{"type": "goal", "confidence": 0.95, "description": "Home team scores, scoreboard changes from 0-1 to 1-1"}]}
 
 If no key event occurred, return: {"events": []}
 Do not guess. If uncertain, set confidence below 0.5.

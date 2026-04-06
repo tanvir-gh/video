@@ -4,10 +4,12 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "app.detection")
 public record DetectionProperties(
-    double audioThresholdMultiplier,
-    double confidenceThreshold,
     int windowDuration,
-    int windowOverlap,
+    double confidenceThreshold,
+    int keyframeCount,
+    int keyframeWidth,
+    boolean whisperEnabled,
     String whisperModel,
+    boolean whisperTranslate,
     String workDir
 ) {}

@@ -9,14 +9,16 @@ logging:
 app:
   hls-dir: ${user.dir}/samples/hls
   detection:
-    audio-threshold-multiplier: 2.0
-    confidence-threshold: 0.7
     window-duration: 30
-    window-overlap: 15
+    confidence-threshold: 0.7
+    keyframe-count: 3
+    keyframe-width: 1280
+    whisper-enabled: false
     whisper-model: base
+    whisper-translate: true
     work-dir: ${user.dir}/work
-  openrouter:
-    api-url: http://localhost:11434/api/chat
-    model: qwen3.5:4b
-    api-key: ""
-    enabled: true
+  ollama:
+    url: http://localhost:11434/api/chat
+    model: qwen3.5:9b
+    max-tokens: 500
+    temperature: 0.1

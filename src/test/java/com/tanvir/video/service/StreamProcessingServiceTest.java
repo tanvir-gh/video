@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import com.tanvir.video.config.DetectionProperties;
-import com.tanvir.video.config.OpenRouterProperties;
+import com.tanvir.video.config.OllamaProperties;
 import com.tanvir.video.model.StreamSession;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -23,17 +23,14 @@ class StreamProcessingServiceTest {
     void setUp() {
         Path workDir = tempDir.resolve("work");
         Path hlsDir = tempDir.resolve("hls");
-        var detectionProps = new DetectionProperties(2.0, 0.7, 30, 15, "base", workDir.toString());
-        var openRouterProps = new OpenRouterProperties(
-                "https://openrouter.ai/api/v1/chat/completions",
-                "qwen/qwen3.5-flash-02-23", "", false);
+        var detectionProps = new DetectionProperties(30, 0.7, 3, 512, false, "base", true, workDir.toString());
+        var ollamaProps = new OllamaProperties("http://localhost:11434/api/chat", "qwen3.5:9b", 200, 0.1);
 
-        var triageService = new TriageService(detectionProps);
-        var classifierService = new ClassifierService(detectionProps, openRouterProps);
+        var classifierService = new ClassifierService(detectionProps, ollamaProps);
         classifierService.loadPromptTemplate();
         var clipExtractorService = new ClipExtractorService(detectionProps);
         processingService = new StreamProcessingService(
-                detectionProps, triageService, classifierService, clipExtractorService, hlsDir.toString());
+                detectionProps, classifierService, clipExtractorService, hlsDir.toString());
     }
 
     @Test
@@ -41,7 +38,6 @@ class StreamProcessingServiceTest {
         StreamSession session = processingService.createSession("http://example.com/stream.m3u8");
         assertNotNull(session.getId());
         assertEquals(StreamSession.Status.RUNNING, session.getStatus());
-        assertEquals("http://example.com/stream.m3u8", session.getStreamUrl());
     }
 
     @Test

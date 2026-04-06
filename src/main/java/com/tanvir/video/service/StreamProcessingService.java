@@ -19,7 +19,6 @@ import com.tanvir.video.config.DetectionProperties;
 import com.tanvir.video.model.ClassificationResult;
 import com.tanvir.video.model.DetectedEvent;
 import com.tanvir.video.model.StreamSession;
-import com.tanvir.video.model.TriageResult;
 
 @Service
 public class StreamProcessingService {
@@ -27,7 +26,6 @@ public class StreamProcessingService {
     private static final Logger log = LoggerFactory.getLogger(StreamProcessingService.class);
 
     private final DetectionProperties props;
-    private final TriageService triageService;
     private final ClassifierService classifierService;
     private final ClipExtractorService clipExtractorService;
     private final String hlsDir;
@@ -35,12 +33,10 @@ public class StreamProcessingService {
 
     public StreamProcessingService(
             DetectionProperties props,
-            TriageService triageService,
             ClassifierService classifierService,
             ClipExtractorService clipExtractorService,
             @Value("${app.hls-dir}") String hlsDir) {
         this.props = props;
-        this.triageService = triageService;
         this.classifierService = classifierService;
         this.clipExtractorService = clipExtractorService;
         this.hlsDir = hlsDir;
@@ -94,27 +90,33 @@ public class StreamProcessingService {
                     ffmpegOutput.substring(Math.max(0, ffmpegOutput.length() - 300)));
         }
 
+        // Only extract audio if whisper is enabled
+        boolean needAudio = props.whisperEnabled();
+
         List<WindowChunk> windows = new ArrayList<>();
         for (int i = 0; ; i++) {
             Path videoChunk = workDir.resolve(String.format("window_%03d.ts", i));
             if (!Files.exists(videoChunk)) break;
 
-            Path audioChunk = workDir.resolve(String.format("window_%03d.wav", i));
-            ProcessBuilder audioPb = new ProcessBuilder(
-                    "ffmpeg", "-y",
-                    "-i", videoChunk.toString(),
-                    "-vn", "-ar", "22050", "-ac", "1",
-                    audioChunk.toString()
-            );
-            audioPb.redirectErrorStream(true);
-            Process audioProc = audioPb.start();
-            audioProc.getInputStream().readAllBytes();
-            audioProc.waitFor();
+            Path audioChunk = null;
+            if (needAudio) {
+                audioChunk = workDir.resolve(String.format("window_%03d.wav", i));
+                ProcessBuilder audioPb = new ProcessBuilder(
+                        "ffmpeg", "-y",
+                        "-i", videoChunk.toString(),
+                        "-vn", "-ar", "22050", "-ac", "1",
+                        audioChunk.toString()
+                );
+                audioPb.redirectErrorStream(true);
+                Process audioProc = audioPb.start();
+                audioProc.getInputStream().readAllBytes();
+                audioProc.waitFor();
+            }
 
             windows.add(new WindowChunk(videoChunk, audioChunk, i));
         }
 
-        log.info("Segmented {} into {} windows", sourcePath.getFileName(), windows.size());
+        log.info("Segmented into {} windows (audio extraction: {})", windows.size(), needAudio);
         return windows;
     }
 
@@ -136,52 +138,55 @@ public class StreamProcessingService {
             Files.createDirectories(hlsOutput);
 
             Path sourcePath = Path.of(session.getStreamUrl());
-            log.debug("Work dir: {}, HLS output: {}", workDir, hlsOutput);
 
             eventCallback.accept("{\"type\":\"progress\",\"message\":\"Segmenting stream...\"}");
             List<WindowChunk> windows = segmentStream(sourcePath, workDir);
-
-            double baselineRms = 0.01;
-            if (!windows.isEmpty()) {
-                double sum = 0;
-                int count = Math.min(2, windows.size());
-                for (int i = 0; i < count; i++) {
-                    sum += triageService.extractAudioRms(windows.get(i).audioPath());
-                }
-                baselineRms = sum / count;
-                if (baselineRms <= 0) baselineRms = 0.01;
-            }
-            eventCallback.accept("{\"type\":\"progress\",\"message\":\"Baseline RMS: " +
-                    String.format("%.4f", baselineRms) + "\"}");
+            eventCallback.accept("{\"type\":\"progress\",\"message\":\"" + windows.size() + " windows to analyze\"}");
 
             for (WindowChunk window : windows) {
                 if (session.getStatus() != StreamSession.Status.RUNNING) break;
 
-                TriageResult triage = triageService.triage(
-                        window.index(), window.videoPath(), window.audioPath(), baselineRms, workDir);
-                session.incrementWindowsProcessed();
-
-                eventCallback.accept("{\"type\":\"triage\",\"window\":" + window.index() +
-                        ",\"candidate\":" + triage.isCandidate() +
-                        ",\"reason\":\"" + triage.reason().replace("\"", "'") + "\"}");
-
-                if (!triage.isCandidate()) continue;
-                session.incrementCandidatesFound();
+                long windowStart = System.currentTimeMillis();
+                Path windowWorkDir = workDir.resolve("w" + window.index());
+                Files.createDirectories(windowWorkDir);
 
                 eventCallback.accept("{\"type\":\"classifying\",\"window\":" + window.index() + "}");
 
-                String transcript = classifierService.transcribeAudio(window.audioPath());
-                ClassificationResult classification = classifierService.classify(triage, transcript);
+                // Extract keyframes
+                List<Path> framePaths = classifierService.extractKeyframes(window.videoPath(), windowWorkDir);
+                List<String> base64Frames = classifierService.encodeFrames(framePaths);
+
+                // Optional whisper transcript
+                String transcript = "";
+                if (window.audioPath() != null) {
+                    transcript = classifierService.transcribeAudio(window.audioPath());
+                }
+
+                // Classify with vision + optional transcript
+                ClassificationResult classification = classifierService.classify(base64Frames, transcript);
+                session.incrementWindowsProcessed();
+
+                long windowElapsed = System.currentTimeMillis() - windowStart;
+
+                if (classification.events().isEmpty()) {
+                    eventCallback.accept("{\"type\":\"triage\",\"window\":" + window.index() +
+                            ",\"candidate\":false,\"reason\":\"no events detected (" + windowElapsed + "ms)\"}");
+                    continue;
+                }
 
                 for (ClassificationResult.Event event : classification.events()) {
                     if (event.confidence() < props.confidenceThreshold()) {
                         eventCallback.accept("{\"type\":\"low_confidence\",\"event\":\"" +
-                                event.type() + "\",\"confidence\":" + event.confidence() + "}");
+                                event.type() + "\",\"confidence\":" + event.confidence() +
+                                ",\"window\":" + window.index() + "}");
                         continue;
                     }
 
+                    session.incrementCandidatesFound();
+
                     double eventTime = window.index() * props.windowDuration() + props.windowDuration() / 2.0;
-                    String slug = String.format("%s_%03d_%s", sessionId, window.index(), event.type());
+                    String slug = String.format("%s_%03d_%s", sessionId, window.index(),
+                            event.type().toLowerCase().replace(" ", "_"));
 
                     clipExtractorService.extractClip(
                             sourcePath, eventTime, props.windowDuration(), slug, hlsOutput);
@@ -193,7 +198,11 @@ public class StreamProcessingService {
 
                     eventCallback.accept("{\"type\":\"event\",\"event\":\"" + event.type() +
                             "\",\"confidence\":" + event.confidence() +
-                            ",\"clip\":\"" + slug + "\",\"timestamp\":" + eventTime + "}");
+                            ",\"clip\":\"" + slug +
+                            "\",\"timestamp\":" + eventTime +
+                            ",\"description\":\"" + event.description().replace("\"", "'") +
+                            "\",\"window\":" + window.index() +
+                            ",\"elapsed\":" + windowElapsed + "}");
                 }
             }
 
