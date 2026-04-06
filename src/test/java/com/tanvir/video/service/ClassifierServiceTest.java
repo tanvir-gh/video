@@ -29,15 +29,17 @@ class ClassifierServiceTest {
     }
 
     @Test
-    void buildPrompt_insertsTranscript() {
-        String prompt = classifier.buildPrompt("The crowd goes wild!");
+    void buildPrompt_insertsTranscriptAndContext() {
+        String prompt = classifier.buildPrompt("The crowd goes wild!", "Window 0: no events");
         assertTrue(prompt.contains("The crowd goes wild!"));
+        assertTrue(prompt.contains("Window 0: no events"));
     }
 
     @Test
-    void buildPrompt_handlesEmptyTranscript() {
-        String prompt = classifier.buildPrompt("");
+    void buildPrompt_handlesEmptyInputs() {
+        String prompt = classifier.buildPrompt("", "");
         assertTrue(prompt.contains("No commentary transcript available."));
+        assertTrue(prompt.contains("first window"));
     }
 
     @Test
@@ -78,7 +80,7 @@ class ClassifierServiceTest {
     @Test
     void classify_withEmptyFrames_stillWorks() {
         // With no ollama running in test, this will fail gracefully
-        ClassificationResult result = classifier.classify(List.of(), "some transcript");
+        ClassificationResult result = classifier.classify(List.of(), "some transcript", "");
         // Either returns events from LLM or empty on connection failure
         assertNotNull(result);
     }

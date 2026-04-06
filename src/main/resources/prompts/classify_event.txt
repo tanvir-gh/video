@@ -1,26 +1,25 @@
-You are a soccer match event detector analyzing keyframes from a 30-second broadcast window.
+Analyze these keyframes from a 30-second soccer broadcast window step by step.
+
+1. SCOREBOARD: Read the score and match time from any visible scoreboard overlay.
+
+2. CAMERA: What type of shot is each frame? (wide play / close-up player / close-up referee / goalkeeper area / replay / celebration)
+
+3. EVENTS: Based on steps 1-2 and the context below, did any of these happen?
+   - Goal: score CHANGED from previous window + celebration or ball in net
+   - Penalty: referee pointing to penalty spot, players gathering in box
+   - Red card: referee showing red card, player walking off
+   - Yellow card: referee holding up yellow card to a player
+   - Key save / Shot on target: goalkeeper diving or reacting, close-up behind net after action
+
+Previous window context:
+{context}
 
 Commentary transcript: {transcript}
 
-Detect these events:
-- Goal: scoreboard score changes, player celebrations, ball in net, team huddle
-- Penalty: referee pointing to penalty spot, players gathering in box
-- Red card: referee showing red card, player walking off, team down to 10
-- Yellow card: referee showing yellow card, close-up of referee and player together, player arguing
-- Key save / Shot on target: goalkeeper diving or reacting near goal, goalkeeper close-up behind net, camera focused on goal area, near-miss reactions
-
-IMPORTANT broadcast camera cues:
-- Close-up shots of players/referee = something significant just happened
-- Goalkeeper close-up behind the net = save or shot on target
-- Replay sequences (slightly different angle of same action) = key event occurred
-- Wide pitch view with normal play = nothing happened
-- Players surrounding referee = card being shown or disputed
-
-Check the scoreboard overlay in each frame for score and time changes.
+IMPORTANT: If the score is the SAME as the previous window, there was NO goal. Do not report a goal unless the score actually changed.
 
 Respond with JSON only, no markdown:
-{"events": [{"type": "goal", "confidence": 0.95, "description": "Home team scores"}]}
+{"events": [{"type": "goal", "confidence": 0.95, "description": "Score changed from 0-2 to 1-2, player celebrating"}]}
 
 If no key event, return: {"events": []}
-Set confidence below 0.5 if uncertain but still report it — let the system filter by threshold.
-A goalkeeper close-up behind the net almost always means a shot was just taken. Report it.
+Set confidence below 0.5 if uncertain but still report it.

@@ -11,7 +11,7 @@ app:
   detection:
     window-duration: 30
     confidence-threshold: 0.5
-    keyframe-count: 3
+    keyframe-count: 10
     keyframe-width: 768
     whisper-enabled: false
     whisper-model: base

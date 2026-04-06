@@ -140,17 +140,19 @@ public class ClassifierService {
         return text;
     }
 
-    public String buildPrompt(String transcript) {
-        String prompt = promptTemplate.replace("{transcript}",
-                transcript.isEmpty() ? "No commentary transcript available." : transcript);
-        return prompt;
+    public String buildPrompt(String transcript, String context) {
+        return promptTemplate
+                .replace("{transcript}",
+                        transcript.isEmpty() ? "No commentary transcript available." : transcript)
+                .replace("{context}",
+                        context.isEmpty() ? "This is the first window. No previous context." : context);
     }
 
     /**
-     * Classify a window using vision (keyframes) + optional transcript.
+     * Classify a window using vision (keyframes) + optional transcript + context.
      */
-    public ClassificationResult classify(List<String> base64Frames, String transcript) {
-        String prompt = buildPrompt(transcript);
+    public ClassificationResult classify(List<String> base64Frames, String transcript, String context) {
+        String prompt = buildPrompt(transcript, context);
         return callOllama(prompt, base64Frames);
     }
 

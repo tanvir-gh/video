@@ -143,6 +143,11 @@ public class StreamProcessingService {
             List<WindowChunk> windows = segmentStream(sourcePath, workDir);
             eventCallback.accept("{\"type\":\"progress\",\"message\":\"" + windows.size() + " windows to analyze\"}");
 
+            // Track context across windows for LLM
+            StringBuilder runningContext = new StringBuilder();
+            String lastEventType = "";
+            int lastEventWindow = -10;
+
             for (WindowChunk window : windows) {
                 if (session.getStatus() != StreamSession.Status.RUNNING) break;
 
@@ -162,16 +167,32 @@ public class StreamProcessingService {
                     transcript = classifierService.transcribeAudio(window.audioPath());
                 }
 
-                // Classify with vision + optional transcript
-                ClassificationResult classification = classifierService.classify(base64Frames, transcript);
+                // Build context from recent windows (last 3)
+                String context = runningContext.toString();
+                // Keep only last 3 entries
+                String[] contextLines = context.split("\n");
+                if (contextLines.length > 3) {
+                    context = String.join("\n",
+                            java.util.Arrays.copyOfRange(contextLines, contextLines.length - 3, contextLines.length));
+                }
+
+                // Classify with vision + optional transcript + context
+                ClassificationResult classification = classifierService.classify(base64Frames, transcript, context);
                 session.incrementWindowsProcessed();
 
                 long windowElapsed = System.currentTimeMillis() - windowStart;
 
+                // Update running context for next window
                 if (classification.events().isEmpty()) {
+                    runningContext.append(String.format("Window %d: no events detected\n", window.index()));
                     eventCallback.accept("{\"type\":\"triage\",\"window\":" + window.index() +
                             ",\"candidate\":false,\"reason\":\"no events detected (" + windowElapsed + "ms)\"}");
                     continue;
+                } else {
+                    for (var ev : classification.events()) {
+                        runningContext.append(String.format("Window %d: %s (conf=%.2f) — %s\n",
+                                window.index(), ev.type(), ev.confidence(), ev.description()));
+                    }
                 }
 
                 for (ClassificationResult.Event event : classification.events()) {
@@ -182,11 +203,24 @@ public class StreamProcessingService {
                         continue;
                     }
 
+                    // Deduplicate: suppress same event type in consecutive windows (likely replay)
+                    String eventType = event.type().toLowerCase();
+                    if (eventType.equals(lastEventType) && window.index() - lastEventWindow <= 2) {
+                        log.info("Suppressed duplicate {} at window {} (previous at window {})",
+                                event.type(), window.index(), lastEventWindow);
+                        eventCallback.accept("{\"type\":\"suppressed\",\"event\":\"" +
+                                event.type() + "\",\"window\":" + window.index() +
+                                ",\"reason\":\"duplicate of window " + lastEventWindow + "\"}");
+                        continue;
+                    }
+
+                    lastEventType = eventType;
+                    lastEventWindow = window.index();
                     session.incrementCandidatesFound();
 
                     double eventTime = window.index() * props.windowDuration() + props.windowDuration() / 2.0;
                     String slug = String.format("%s_%03d_%s", sessionId, window.index(),
-                            event.type().toLowerCase().replace(" ", "_"));
+                            eventType.replace(" ", "_").replace("/", "_"));
 
                     clipExtractorService.extractClip(
                             sourcePath, eventTime, props.windowDuration(), slug, hlsOutput);

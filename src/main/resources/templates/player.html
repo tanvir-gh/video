@@ -163,6 +163,8 @@
                     break;
                 case 'classifying':
                     logEvent('Window ' + msg.window + ': classifying...', 'log-classifying'); break;
+                case 'suppressed':
+                    logEvent('Window ' + msg.window + ': suppressed ' + msg.event + ' (' + msg.reason + ')', 'log-triage'); break;
                 case 'event':
                     logEvent('DETECTED: ' + msg.event + ' (confidence: ' + msg.confidence.toFixed(2) + ')', 'log-event');
                     addDetectedEvent(msg); break;
@@ -186,8 +188,12 @@
             var badgeColor = {goal:'success', penalty:'warning', red_card:'danger', red:'danger',
                               yellow_card:'warning', yellow:'warning', save:'info', shot:'info'}[
                               msg.event.replace(' ', '_').replace('/', '_')] || 'secondary';
-            li.innerHTML = '<span class="badge bg-' + badgeColor + ' me-1">' + msg.event + '</span>' +
-                           Math.floor(msg.timestamp / 60) + ':' + ('0' + Math.floor(msg.timestamp % 60)).slice(-2);
+            var timeStr = Math.floor(msg.timestamp / 60) + ':' + ('0' + Math.floor(msg.timestamp % 60)).slice(-2);
+            li.innerHTML = '<span class="badge bg-' + badgeColor + ' me-1">' + msg.event + '</span>' + timeStr;
+            if (msg.description) {
+                li.innerHTML += '<div class="text-secondary mt-1" style="font-size:11px">' +
+                    msg.description.substring(0, 60) + '</div>';
+            }
             li.dataset.src = '/hls/' + currentSessionId + '/' + msg.clip + '/master.m3u8';
             list.appendChild(li);
         }
