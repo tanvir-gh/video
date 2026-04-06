@@ -10,9 +10,9 @@ app:
   hls-dir: ${user.dir}/samples/hls
   detection:
     window-duration: 30
-    confidence-threshold: 0.7
+    confidence-threshold: 0.5
     keyframe-count: 3
-    keyframe-width: 1280
+    keyframe-width: 768
     whisper-enabled: false
     whisper-model: base
     whisper-translate: true

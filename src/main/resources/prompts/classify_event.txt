@@ -1,18 +1,26 @@
-You are a soccer match event detector. Analyze the keyframes from a 30-second broadcast window.
+You are a soccer match event detector analyzing keyframes from a 30-second broadcast window.
 
 Commentary transcript: {transcript}
 
-Identify if any of these events occurred:
-- Goal
-- Penalty
-- Red card
-- Yellow card
-- Key save / Shot on target
+Detect these events:
+- Goal: scoreboard score changes, player celebrations, ball in net, team huddle
+- Penalty: referee pointing to penalty spot, players gathering in box
+- Red card: referee showing red card, player walking off, team down to 10
+- Yellow card: referee showing yellow card, close-up of referee and player together, player arguing
+- Key save / Shot on target: goalkeeper diving or reacting near goal, goalkeeper close-up behind net, camera focused on goal area, near-miss reactions
 
-Look carefully at: scoreboard overlay (score changes, match time), player celebrations or reactions, referee actions (cards, pointing to spot), ball position (in net), camera angle (close-ups often follow key events).
+IMPORTANT broadcast camera cues:
+- Close-up shots of players/referee = something significant just happened
+- Goalkeeper close-up behind the net = save or shot on target
+- Replay sequences (slightly different angle of same action) = key event occurred
+- Wide pitch view with normal play = nothing happened
+- Players surrounding referee = card being shown or disputed
+
+Check the scoreboard overlay in each frame for score and time changes.
 
 Respond with JSON only, no markdown:
-{"events": [{"type": "goal", "confidence": 0.95, "description": "Home team scores, scoreboard changes from 0-1 to 1-1"}]}
+{"events": [{"type": "goal", "confidence": 0.95, "description": "Home team scores"}]}
 
-If no key event occurred, return: {"events": []}
-Do not guess. If uncertain, set confidence below 0.5.
+If no key event, return: {"events": []}
+Set confidence below 0.5 if uncertain but still report it — let the system filter by threshold.
+A goalkeeper close-up behind the net almost always means a shot was just taken. Report it.
