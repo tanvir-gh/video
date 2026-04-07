@@ -1,10 +1,10 @@
-# Production compose: runs the video-detector container.
-# SQLite DB is stored in the work volume. Ollama runs on the host.
+# Runs the video-detector container. SQLite DB is stored in the work
+# volume. Ollama runs on the host (reached via host.docker.internal).
 #
 # Usage:
-#   docker compose -f docker-compose.prod.yaml up -d
-#   docker compose -f docker-compose.prod.yaml logs -f
-#   docker compose -f docker-compose.prod.yaml down
+#   docker compose up -d
+#   docker compose logs -f
+#   docker compose down
 
 services:
   video:

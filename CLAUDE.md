@@ -65,21 +65,22 @@ Ollama and Postgres run on the host (or separate containers) and are reached
 via `host.docker.internal`.
 
 ```bash
-# Start the full prod stack (postgres + video container)
-docker compose -f docker-compose.prod.yaml up -d
+# Start the video container
+docker compose up -d
 
 # Tail logs
-docker compose -f docker-compose.prod.yaml logs -f video
+docker compose logs -f
 
 # Stop
-docker compose -f docker-compose.prod.yaml down
+docker compose down
 
 # Build the image only (without running)
 docker build -t video-detector:latest .
 ```
 
 Ollama must be running on the host (the container reaches it via
-`host.docker.internal:11434`). Postgres is managed by the compose file.
+`host.docker.internal:11434`). SQLite benchmark DB lives in the
+`video_work` volume inside the container.
 
 ## SoccerNet Pipeline (offline batch)
 
