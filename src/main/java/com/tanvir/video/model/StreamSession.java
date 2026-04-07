@@ -2,8 +2,10 @@ package com.tanvir.video.model;
 
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -33,6 +35,9 @@ public class StreamSession {
     private volatile String lastEventType = "";
     private volatile int lastEventWindow = -10;
     private volatile int targetWindow = -1; // most recently requested window
+
+    // Set of event IDs already published to Kafka for this session (for dedup on recovery)
+    private volatile Set<String> recoveredEventIds = Collections.emptySet();
 
     public record WindowInfo(Path videoPath, int index) {}
 
@@ -78,4 +83,9 @@ public class StreamSession {
     public int getTargetWindow() { return targetWindow; }
     public void setTargetWindow(int window) { this.targetWindow = window; }
     public int getWindowCount() { return windows != null ? windows.size() : 0; }
+
+    public Set<String> getRecoveredEventIds() { return recoveredEventIds; }
+    public void setRecoveredEventIds(Set<String> ids) {
+        this.recoveredEventIds = ids != null ? ids : Collections.emptySet();
+    }
 }

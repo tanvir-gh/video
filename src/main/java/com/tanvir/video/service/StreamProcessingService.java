@@ -3,14 +3,17 @@ package com.tanvir.video.service;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -31,6 +34,9 @@ public class StreamProcessingService {
     private final String hlsDir;
     private final Map<String, StreamSession> sessions = new ConcurrentHashMap<>();
 
+    @Autowired(required = false)
+    private EventPublisher eventPublisher;
+
     public StreamProcessingService(
             DetectionProperties props,
             ClassifierService classifierService,
@@ -40,6 +46,21 @@ public class StreamProcessingService {
         this.classifierService = classifierService;
         this.clipExtractorService = clipExtractorService;
         this.hlsDir = hlsDir;
+    }
+
+    /** Create a session with a specific id (used for stream-worker mode). */
+    public StreamSession createSessionWithId(String id, String streamUrl) {
+        StreamSession session = new StreamSession(id, streamUrl);
+        sessions.put(id, session);
+        return session;
+    }
+
+    /** Set recovered event IDs so duplicate publishes are skipped. */
+    public void setRecoveredEventIds(String sessionId, Set<String> eventIds) {
+        StreamSession s = sessions.get(sessionId);
+        if (s != null) {
+            s.setRecoveredEventIds(eventIds);
+        }
     }
 
     public StreamSession createSession(String streamUrl) {
@@ -231,6 +252,12 @@ public class StreamProcessingService {
                     continue;
                 }
 
+                // Kafka-based dedup: if we already published this event ID for this
+                // session (from a prior pod incarnation), skip re-publishing. Still
+                // log it locally so benchmark counts are consistent.
+                String eventId = EventPublisher.eventId(sessionId, windowIndex, event.type());
+                boolean alreadyPublished = session.getRecoveredEventIds().contains(eventId);
+
                 session.setLastEventType(eventType);
                 session.setLastEventWindow(windowIndex);
                 session.incrementCandidatesFound();
@@ -239,13 +266,23 @@ public class StreamProcessingService {
                 String slug = String.format("%s_%03d_%s", sessionId, windowIndex,
                         eventType.replace(" ", "_").replace("/", "_"));
 
-                clipExtractorService.extractClip(
-                        session.getSourcePath(), eventTime, props.windowDuration(), slug, session.getHlsOutput());
+                // Only extract the clip if we haven't already
+                if (!alreadyPublished) {
+                    clipExtractorService.extractClip(
+                            session.getSourcePath(), eventTime, props.windowDuration(), slug, session.getHlsOutput());
+                }
 
                 DetectedEvent detected = new DetectedEvent(
                         event.type(), event.confidence(), event.description(),
                         windowIndex, eventTime, slug);
                 session.addEvent(detected);
+
+                // Publish to Kafka (idempotent: same eventId = same key = dedup)
+                if (eventPublisher != null && !alreadyPublished) {
+                    eventPublisher.publish(sessionId, detected);
+                } else if (alreadyPublished) {
+                    log.info("Skipping republish of {} (already in Kafka from prior run)", eventId);
+                }
 
                 eventCallback.accept("{\"type\":\"event\",\"event\":\"" + event.type() +
                         "\",\"confidence\":" + event.confidence() +

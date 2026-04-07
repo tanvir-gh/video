@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -16,6 +17,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tanvir.video.model.StreamSession;
+import com.tanvir.video.service.JobLauncherService;
 import com.tanvir.video.service.StreamProcessingService;
 
 @RestController
@@ -26,11 +28,61 @@ public class StreamController {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Map<String, SseEmitter> emitters = new ConcurrentHashMap<>();
 
+    @Autowired(required = false)
+    private JobLauncherService jobLauncher;
+
     @Value("${app.hls-dir}")
     private String hlsDir;
 
     public StreamController(StreamProcessingService processingService) {
         this.processingService = processingService;
+    }
+
+    /**
+     * Launch a new stream as a Kubernetes Job. The Job runs the video-detector
+     * container in --pipeline.stream mode, which processes the stream and
+     * publishes detected events to Kafka.
+     */
+    @PostMapping("/launch")
+    public ResponseEntity<Map<String, Object>> launchStream(@RequestBody Map<String, String> request) {
+        if (jobLauncher == null) {
+            return ResponseEntity.status(503).body(Map.of("error", "JobLauncherService not available"));
+        }
+        String url = request.get("url");
+        if (url == null || url.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "url is required"));
+        }
+        try {
+            return ResponseEntity.ok(jobLauncher.launch(url));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Stop a running stream by deleting its k8s Job.
+     */
+    @DeleteMapping("/launch/{sessionId}")
+    public ResponseEntity<Map<String, Object>> stopLaunched(@PathVariable String sessionId) {
+        if (jobLauncher == null) {
+            return ResponseEntity.status(503).body(Map.of("error", "JobLauncherService not available"));
+        }
+        boolean deleted = jobLauncher.stop(sessionId);
+        if (!deleted) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(Map.of("sessionId", sessionId, "status", "STOPPED"));
+    }
+
+    /**
+     * Get status of a launched stream.
+     */
+    @GetMapping("/launch/{sessionId}")
+    public ResponseEntity<Map<String, Object>> launchStatus(@PathVariable String sessionId) {
+        if (jobLauncher == null) {
+            return ResponseEntity.status(503).body(Map.of("error", "JobLauncherService not available"));
+        }
+        return ResponseEntity.ok(jobLauncher.status(sessionId));
     }
 
     @GetMapping("/ground-truth")

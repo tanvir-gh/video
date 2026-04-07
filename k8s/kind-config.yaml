@@ -1,0 +1,20 @@
+# kind cluster config for local Architecture 1 testing.
+#
+# Pod requirements:
+# - Read clips from samples/hls
+# - Write SQLite DB + temp files to work/
+# - Reach host services: ollama (11434), kafka (9092)
+#
+# Network: kind nodes run on Docker bridge network. The host is reachable
+# from inside the kind node at the bridge gateway IP (172.18.0.1 typically).
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: video-detector
+nodes:
+  - role: control-plane
+    extraMounts:
+      - hostPath: /home/tanvir/src/video/samples/hls
+        containerPath: /mnt/samples/hls
+      - hostPath: /home/tanvir/src/video/work
+        containerPath: /mnt/work

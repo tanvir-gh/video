@@ -19,12 +19,55 @@ JPA, Kafka, and Docker Compose are in `build.gradle` as scaffolding for future u
 ./gradlew test -PincludeTags=integration  # Integration tests (needs ffmpeg+ollama)
 ./gradlew clean build        # Clean rebuild
 
-# CLI mode — process a single clip directly
+# CLI mode — process a single clip directly (benchmark)
 ./gradlew bootRun --args="--pipeline.input=samples/hls/01_goal_2_arsenal/master.m3u8 --spring.main.web-application-type=none"
 
 # Override config on CLI
 ./gradlew bootRun --args="--pipeline.input=... --app.detection.keyframe-count=5 --app.ollama.model=qwen3.5:4b"
 ```
+
+## Architecture 1: k8s Job per stream (production deployment)
+
+Each live stream runs in its own dedicated Kubernetes Job. Detected events
+are published to a Kafka topic (`detected-events`) with deterministic event
+IDs. On pod restart, the new pod reads the topic to find already-published
+events and skips duplicates (idempotent writer pattern).
+
+```bash
+# 1. Start local stack (Kafka)
+docker compose up -d kafka
+
+# 2. Create kind cluster, install image
+kind create cluster --config k8s/kind-config.yaml
+./gradlew bootJar && docker build -t video-detector:latest .
+kind load docker-image video-detector:latest --name video-detector
+
+# 3. Start the launcher API on the host
+./gradlew bootRun --args="--spring.main.web-application-type=servlet"
+
+# 4. Launch a stream as a k8s Job
+curl -s -X POST http://localhost:8080/api/streams/launch \
+  -H "Content-Type: application/json" \
+  -d '{"url":"samples/hls/01_goal_2_arsenal/master.m3u8"}'
+
+# 5. Watch progress
+~/.local/bin/kubectl get jobs,pods
+~/.local/bin/kubectl logs -f pod/stream-<sessionId>-<random>
+
+# 6. Inspect detected events in Kafka
+docker exec video-kafka-1 kafka-console-consumer \
+  --bootstrap-server 172.18.0.1:9092 --topic detected-events \
+  --from-beginning --timeout-ms 5000
+
+# 7. Stop a running stream
+curl -s -X DELETE http://localhost:8080/api/streams/launch/<sessionId>
+```
+
+**Recovery on failure:** when a Job's pod crashes, k8s creates a new pod
+with the same `STREAM_SESSION_ID` env var. The new pod queries Kafka for
+events already published with that sessionId, builds a dedup set, and skips
+re-publishing them. Deterministic event IDs (`{sessionId}-w{N}-{type}`) make
+this safe.
 
 ## Benchmarking (REQUIRED for any pipeline change)
 

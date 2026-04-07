@@ -23,6 +23,7 @@ import com.tanvir.video.model.BenchmarkRun;
 import com.tanvir.video.model.DetectedEvent;
 import com.tanvir.video.model.StreamSession;
 import com.tanvir.video.repository.BenchmarkRunRepository;
+import com.tanvir.video.service.EventRecovery;
 import com.tanvir.video.service.StreamProcessingService;
 
 /**
@@ -44,6 +45,7 @@ public class PipelineRunner implements ApplicationRunner {
     private final DetectionProperties detectionProps;
     private final OllamaProperties ollamaProps;
     private final BenchmarkRunRepository benchmarkRunRepository;
+    private final EventRecovery eventRecovery;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${app.hls-dir}")
@@ -52,11 +54,13 @@ public class PipelineRunner implements ApplicationRunner {
     public PipelineRunner(StreamProcessingService processingService,
                           DetectionProperties detectionProps,
                           OllamaProperties ollamaProps,
-                          BenchmarkRunRepository benchmarkRunRepository) {
+                          BenchmarkRunRepository benchmarkRunRepository,
+                          EventRecovery eventRecovery) {
         this.processingService = processingService;
         this.detectionProps = detectionProps;
         this.ollamaProps = ollamaProps;
         this.benchmarkRunRepository = benchmarkRunRepository;
+        this.eventRecovery = eventRecovery;
     }
 
     @Override
@@ -69,7 +73,59 @@ public class PipelineRunner implements ApplicationRunner {
             for (String input : inputs) {
                 processClip(input);
             }
+        } else if (args.containsOption("pipeline.stream")) {
+            // Stream worker mode (run as a k8s Job pod). Reads sessionId + URL
+            // from env vars, performs Kafka recovery, processes the stream.
+            logConfig();
+            runStreamWorker();
         }
+    }
+
+    /**
+     * Stream worker mode — entry point for k8s Job pods.
+     * Reads STREAM_SESSION_ID and STREAM_URL from environment variables,
+     * runs Kafka recovery to find already-published events, then processes
+     * the stream. Exits 0 on completion.
+     */
+    private void runStreamWorker() throws Exception {
+        String sessionId = System.getenv("STREAM_SESSION_ID");
+        String streamUrl = System.getenv("STREAM_URL");
+
+        if (sessionId == null || sessionId.isBlank()) {
+            log.error("STREAM_SESSION_ID env var not set, cannot run stream worker");
+            System.exit(2);
+        }
+        if (streamUrl == null || streamUrl.isBlank()) {
+            log.error("STREAM_URL env var not set, cannot run stream worker");
+            System.exit(2);
+        }
+
+        log.info("=== Stream Worker Mode ===");
+        log.info("Session ID: {}", sessionId);
+        log.info("Stream URL: {}", streamUrl);
+
+        // Phase 1: Recover from Kafka
+        var recovered = eventRecovery.recoverEventIds(sessionId);
+        log.info("Recovery: {} event IDs already published for this session", recovered.size());
+
+        // Phase 2: Create session with the given ID and inject recovery state
+        StreamSession session = processingService.createSessionWithId(sessionId, streamUrl);
+        processingService.setRecoveredEventIds(sessionId, recovered);
+
+        // Phase 3: Process synchronously and wait for completion
+        long start = System.currentTimeMillis();
+        java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+
+        processingService.processStream(sessionId, message -> logStreamEvent(message, done));
+
+        done.await(24, java.util.concurrent.TimeUnit.HOURS);
+        long elapsed = System.currentTimeMillis() - start;
+
+        log.info("Stream worker complete: {}s, {} events detected ({} new, {} from recovery)",
+                String.format("%.1f", elapsed / 1000.0),
+                session.getDetectedEvents().size(),
+                session.getDetectedEvents().size() - recovered.size(),
+                recovered.size());
     }
 
     private void logConfig() {
