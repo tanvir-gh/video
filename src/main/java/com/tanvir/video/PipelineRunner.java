@@ -104,13 +104,16 @@ public class PipelineRunner implements ApplicationRunner {
         log.info("Session ID: {}", sessionId);
         log.info("Stream URL: {}", streamUrl);
 
-        // Phase 1: Recover from Kafka
-        var recovered = eventRecovery.recoverEventIds(sessionId);
-        log.info("Recovery: {} event IDs already published for this session", recovered.size());
+        // Phase 1: Recover from Kafka — finds resume window AND already-published
+        // event IDs in a single topic scan.
+        EventRecovery.RecoveryState recovery = eventRecovery.recover(sessionId);
+        log.info("Recovery: resume from window {}, {} event IDs already published",
+                recovery.resumeFromWindow(), recovery.publishedEventIds().size());
 
         // Phase 2: Create session with the given ID and inject recovery state
         StreamSession session = processingService.createSessionWithId(sessionId, streamUrl);
-        processingService.setRecoveredEventIds(sessionId, recovered);
+        processingService.setRecoveredEventIds(sessionId, recovery.publishedEventIds());
+        processingService.setResumeFromWindow(sessionId, recovery.resumeFromWindow());
 
         // Phase 3: Process synchronously and wait for completion
         long start = System.currentTimeMillis();
@@ -121,11 +124,10 @@ public class PipelineRunner implements ApplicationRunner {
         done.await(24, java.util.concurrent.TimeUnit.HOURS);
         long elapsed = System.currentTimeMillis() - start;
 
-        log.info("Stream worker complete: {}s, {} events detected ({} new, {} from recovery)",
+        log.info("Stream worker complete: {}s, {} events detected (resumed from window {})",
                 String.format("%.1f", elapsed / 1000.0),
                 session.getDetectedEvents().size(),
-                session.getDetectedEvents().size() - recovered.size(),
-                recovered.size());
+                recovery.resumeFromWindow());
     }
 
     private void logConfig() {

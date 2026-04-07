@@ -1,6 +1,9 @@
 package com.tanvir.video.service;
 
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.slf4j.Logger;
@@ -12,15 +15,21 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tanvir.video.model.DetectedEvent;
 
 /**
- * Publishes detected events to the Kafka 'detected-events' topic using the
- * idempotent writer pattern. Each event has a deterministic ID
- * {sessionId}-w{windowIndex}-{eventType} so that re-publishing (e.g., after
- * a pod restart reprocesses the same window) is a no-op from the downstream
- * consumer's perspective.
+ * Publishes per-window records to the Kafka 'detected-events' topic.
+ * One record per window — even windows with no events get a record so
+ * the recovery code can know "we processed up to window N".
  *
- * Kafka's producer idempotence (enable.idempotence=true) guarantees that
- * retries don't duplicate at the partition level. Consumer-side dedup by
- * eventId on startup provides the stronger guarantee needed for recovery.
+ * Key format: {sessionId}/w{8-digit-window-index}
+ *   - sessionId/wNNNNNNNN
+ *   - sortable, parseable, log-compaction friendly
+ *
+ * Value format: JSON with windowIndex, wallClock, and an events array
+ * (possibly empty for quiet windows).
+ *
+ * Idempotency: Kafka's producer (enable.idempotence=true) handles in-flight
+ * retries. Cross-pod recovery is handled by EventRecovery, which reads the
+ * topic on startup, finds the highest window already processed, and tells
+ * the pipeline to skip ahead.
  */
 @Service
 public class EventPublisher {
@@ -37,8 +46,16 @@ public class EventPublisher {
     }
 
     /**
-     * Compute the deterministic event ID for an event in a given window.
-     * Same window + same type = same ID. Safe to republish.
+     * Compute the Kafka record key for a window. Same window = same key,
+     * so log-compaction keeps only the latest version per window.
+     */
+    public static String windowKey(String sessionId, int windowIndex) {
+        return sessionId + "/w" + String.format("%08d", windowIndex);
+    }
+
+    /**
+     * Internal dedup ID for an event within a window. Used by the pipeline
+     * to skip republishing the exact same event when a window is reprocessed.
      */
     public static String eventId(String sessionId, int windowIndex, String type) {
         String cleanType = type.toLowerCase().replace(" ", "_").replace("/", "_");
@@ -46,29 +63,41 @@ public class EventPublisher {
     }
 
     /**
-     * Publish a detected event. The Kafka record key is the eventId
-     * (so log-compaction will keep the latest version of each event).
-     * The value is the full event JSON including the sessionId.
+     * Publish a window record to Kafka. Always called once per processed
+     * window — empty events list means "quiet window heartbeat".
      */
-    public void publish(String sessionId, DetectedEvent event) {
-        String eventId = eventId(sessionId, event.windowIndex(), event.type());
+    public void publishWindow(String sessionId, int windowIndex, List<DetectedEvent> events) {
+        String key = windowKey(sessionId, windowIndex);
         try {
             Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("eventId", eventId);
             payload.put("sessionId", sessionId);
-            payload.put("type", event.type());
-            payload.put("confidence", event.confidence());
-            payload.put("description", event.description());
-            payload.put("windowIndex", event.windowIndex());
-            payload.put("timestampSec", event.timestampSec());
-            payload.put("clipPath", event.clipPath());
+            payload.put("windowIndex", windowIndex);
+            payload.put("wallClock", Instant.now().toString());
+
+            List<Map<String, Object>> eventList = new ArrayList<>();
+            for (DetectedEvent e : events) {
+                Map<String, Object> ev = new LinkedHashMap<>();
+                ev.put("eventId", eventId(sessionId, windowIndex, e.type()));
+                ev.put("type", e.type());
+                ev.put("confidence", e.confidence());
+                ev.put("description", e.description());
+                ev.put("timestampSec", e.timestampSec());
+                ev.put("clipPath", e.clipPath());
+                eventList.add(ev);
+            }
+            payload.put("events", eventList);
 
             String json = objectMapper.writeValueAsString(payload);
-            kafkaTemplate.send(TOPIC, eventId, json);
-            log.info("Published event {}: {} (conf={})", eventId, event.type(),
-                    String.format("%.2f", event.confidence()));
+            kafkaTemplate.send(TOPIC, key, json);
+
+            if (events.isEmpty()) {
+                log.debug("Published heartbeat: {}", key);
+            } else {
+                log.info("Published window {}: {} events ({})", key, events.size(),
+                        events.stream().map(DetectedEvent::type).toList());
+            }
         } catch (Exception e) {
-            log.error("Failed to publish event {}: {}", eventId, e.getMessage());
+            log.error("Failed to publish window record {}: {}", key, e.getMessage());
         }
     }
 }

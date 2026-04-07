@@ -1,7 +1,6 @@
 package com.tanvir.video.service;
 
 import java.time.Duration;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -24,12 +23,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * On worker startup, reads the 'detected-events' topic from the beginning
- * and returns the set of event IDs already published for a given sessionId.
- * The worker uses this set to skip re-publishing events during recovery.
+ * On worker startup, scans the 'detected-events' topic for records belonging
+ * to a given sessionId and returns:
+ *   1. resumeFromWindow — the next window to process (highest seen + 1)
+ *   2. publishedEventIds — the set of internal eventIds already published
+ *      (used to skip republishing if a window happens to be reprocessed)
  *
- * Uses a unique throwaway consumer group per call (no state pinning), just
- * does a one-shot read of everything currently in the topic, filters, exits.
+ * Uses a unique throwaway consumer group per call so we don't pin state.
+ * Returns sentinel values (resumeFromWindow=0, empty set) if Kafka is
+ * unreachable — recovery degrades gracefully to "start from scratch".
  */
 @Service
 public class EventRecovery {
@@ -41,13 +43,13 @@ public class EventRecovery {
     @Value("${spring.kafka.bootstrap-servers:localhost:9092}")
     private String bootstrapServers;
 
-    /**
-     * Read all events for this sessionId from Kafka and return their eventIds.
-     * Returns an empty set if the topic is empty, doesn't exist, or Kafka is
-     * unreachable (with a warning log — this means recovery is disabled, not
-     * that recovery failed).
-     */
-    public Set<String> recoverEventIds(String sessionId) {
+    public record RecoveryState(int resumeFromWindow, Set<String> publishedEventIds) {
+        public static RecoveryState empty() {
+            return new RecoveryState(0, Set.of());
+        }
+    }
+
+    public RecoveryState recover(String sessionId) {
         Properties props = new Properties();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "recovery-" + UUID.randomUUID());
@@ -58,14 +60,16 @@ public class EventRecovery {
         props.put(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG, "10000");
         props.put(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "10000");
 
-        Set<String> recovered = new HashSet<>();
+        Set<String> publishedEventIds = new HashSet<>();
+        int highestWindow = -1;
+        String sessionPrefix = sessionId + "/w";
 
         try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
             List<PartitionInfo> partitions = consumer.partitionsFor(EventPublisher.TOPIC);
             if (partitions == null || partitions.isEmpty()) {
-                log.info("Recovery: topic {} not found or empty, starting fresh for session {}",
+                log.info("Recovery: topic {} not found, starting fresh for session {}",
                         EventPublisher.TOPIC, sessionId);
-                return Collections.emptySet();
+                return RecoveryState.empty();
             }
 
             List<TopicPartition> tps = partitions.stream()
@@ -74,34 +78,51 @@ public class EventRecovery {
             consumer.assign(tps);
             consumer.seekToBeginning(tps);
 
-            // Find end offsets to know when we've caught up
             Map<TopicPartition, Long> endOffsets = consumer.endOffsets(tps);
-            log.info("Recovery: reading {} partition(s), end offsets: {}", tps.size(), endOffsets);
+            log.info("Recovery: scanning {} partition(s) for session {}, end offsets: {}",
+                    tps.size(), sessionId, endOffsets);
 
             long deadline = System.currentTimeMillis() + 30_000;
             while (System.currentTimeMillis() < deadline) {
                 ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(500));
 
                 for (var record : records) {
+                    String key = record.key();
+                    if (key == null || !key.startsWith(sessionPrefix)) continue;
+
+                    // Parse window index from key: "sessionId/wNNNNNNNN"
+                    int windowIndex;
                     try {
-                        JsonNode node = objectMapper.readTree(record.value());
-                        String recSessionId = node.has("sessionId") ? node.get("sessionId").asText() : null;
-                        String eventId = node.has("eventId") ? node.get("eventId").asText() : record.key();
-                        if (sessionId.equals(recSessionId) && eventId != null) {
-                            recovered.add(eventId);
+                        String windowPart = key.substring(sessionPrefix.length()); // "NNNNNNNN"
+                        windowIndex = Integer.parseInt(windowPart);
+                    } catch (Exception e) {
+                        log.warn("Recovery: malformed key {}", key);
+                        continue;
+                    }
+
+                    if (windowIndex > highestWindow) {
+                        highestWindow = windowIndex;
+                    }
+
+                    // Extract event IDs from value (for cross-pod dedup)
+                    try {
+                        JsonNode root = objectMapper.readTree(record.value());
+                        JsonNode events = root.get("events");
+                        if (events != null && events.isArray()) {
+                            for (JsonNode ev : events) {
+                                if (ev.has("eventId")) {
+                                    publishedEventIds.add(ev.get("eventId").asText());
+                                }
+                            }
                         }
                     } catch (Exception e) {
-                        log.warn("Recovery: failed to parse record at offset {}: {}",
-                                record.offset(), e.getMessage());
+                        log.warn("Recovery: failed to parse value for key {}: {}", key, e.getMessage());
                     }
                 }
 
-                // Check if we've read past the end
                 boolean caughtUp = true;
                 for (TopicPartition tp : tps) {
-                    long pos = consumer.position(tp);
-                    long end = endOffsets.getOrDefault(tp, 0L);
-                    if (pos < end) {
+                    if (consumer.position(tp) < endOffsets.getOrDefault(tp, 0L)) {
                         caughtUp = false;
                         break;
                     }
@@ -109,12 +130,14 @@ public class EventRecovery {
                 if (caughtUp) break;
             }
 
-            log.info("Recovery: found {} existing events for session {}", recovered.size(), sessionId);
-            return recovered;
+            int resumeFrom = highestWindow + 1;
+            log.info("Recovery: session {} — resume from window {}, {} previously-published event IDs",
+                    sessionId, resumeFrom, publishedEventIds.size());
+            return new RecoveryState(resumeFrom, publishedEventIds);
 
         } catch (Exception e) {
             log.warn("Recovery failed (Kafka unreachable?): {}. Starting fresh.", e.getMessage());
-            return Collections.emptySet();
+            return RecoveryState.empty();
         }
     }
 }

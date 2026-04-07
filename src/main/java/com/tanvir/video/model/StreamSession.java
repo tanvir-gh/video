@@ -39,6 +39,9 @@ public class StreamSession {
     // Set of event IDs already published to Kafka for this session (for dedup on recovery)
     private volatile Set<String> recoveredEventIds = Collections.emptySet();
 
+    // Window index to resume from after Kafka recovery (highest seen + 1)
+    private volatile int resumeFromWindow = 0;
+
     public record WindowInfo(Path videoPath, int index) {}
 
     public StreamSession(String id, String streamUrl) {
@@ -88,4 +91,7 @@ public class StreamSession {
     public void setRecoveredEventIds(Set<String> ids) {
         this.recoveredEventIds = ids != null ? ids : Collections.emptySet();
     }
+
+    public int getResumeFromWindow() { return resumeFromWindow; }
+    public void setResumeFromWindow(int window) { this.resumeFromWindow = window; }
 }

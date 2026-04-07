@@ -63,6 +63,14 @@ public class StreamProcessingService {
         }
     }
 
+    /** Set the window index to resume from (skips earlier windows on restart). */
+    public void setResumeFromWindow(String sessionId, int window) {
+        StreamSession s = sessions.get(sessionId);
+        if (s != null) {
+            s.setResumeFromWindow(window);
+        }
+    }
+
     public StreamSession createSession(String streamUrl) {
         String id = UUID.randomUUID().toString().substring(0, 8);
         StreamSession session = new StreamSession(id, streamUrl);
@@ -217,6 +225,10 @@ public class StreamProcessingService {
                     windowIndex, extractMs, encodeMs, llmMs, windowElapsed,
                     framePaths.size(), payloadKb);
 
+            // Collect the events that survive filtering — published as one record
+            // per window at the end (even when empty, so recovery can checkpoint).
+            List<DetectedEvent> windowEvents = new ArrayList<>();
+
             // Update running context
             if (classification.events().isEmpty()) {
                 session.getRunningContext().append(
@@ -224,6 +236,7 @@ public class StreamProcessingService {
                 eventCallback.accept("{\"type\":\"triage\",\"window\":" + windowIndex +
                         ",\"candidate\":false,\"reason\":\"no events detected (" + windowElapsed + "ms)\"" +
                         ",\"timeRange\":\"" + timeRange + "\"}");
+                publishWindowRecord(sessionId, windowIndex, windowEvents);
                 return "quiet";
             }
 
@@ -253,8 +266,8 @@ public class StreamProcessingService {
                 }
 
                 // Kafka-based dedup: if we already published this event ID for this
-                // session (from a prior pod incarnation), skip re-publishing. Still
-                // log it locally so benchmark counts are consistent.
+                // session (from a prior pod incarnation), skip clip extraction.
+                // Still emit it locally so in-memory counts stay consistent.
                 String eventId = EventPublisher.eventId(sessionId, windowIndex, event.type());
                 boolean alreadyPublished = session.getRecoveredEventIds().contains(eventId);
 
@@ -270,19 +283,15 @@ public class StreamProcessingService {
                 if (!alreadyPublished) {
                     clipExtractorService.extractClip(
                             session.getSourcePath(), eventTime, props.windowDuration(), slug, session.getHlsOutput());
+                } else {
+                    log.info("Skipping clip extraction for {} (already in Kafka from prior run)", eventId);
                 }
 
                 DetectedEvent detected = new DetectedEvent(
                         event.type(), event.confidence(), event.description(),
                         windowIndex, eventTime, slug);
                 session.addEvent(detected);
-
-                // Publish to Kafka (idempotent: same eventId = same key = dedup)
-                if (eventPublisher != null && !alreadyPublished) {
-                    eventPublisher.publish(sessionId, detected);
-                } else if (alreadyPublished) {
-                    log.info("Skipping republish of {} (already in Kafka from prior run)", eventId);
-                }
+                windowEvents.add(detected);
 
                 eventCallback.accept("{\"type\":\"event\",\"event\":\"" + event.type() +
                         "\",\"confidence\":" + event.confidence() +
@@ -294,6 +303,9 @@ public class StreamProcessingService {
                         "\",\"elapsed\":" + windowElapsed + "}");
             }
 
+            // One Kafka record per window — checkpoint for crash recovery.
+            // Idempotent: re-running the same window writes the same key/value.
+            publishWindowRecord(sessionId, windowIndex, windowEvents);
             return "processed";
 
         } catch (Exception e) {
@@ -302,6 +314,15 @@ public class StreamProcessingService {
                     " failed: " + e.getMessage().replace("\"", "'") + "\"}");
             return "error";
         }
+    }
+
+    /**
+     * Publish one Kafka record per window (even quiet windows). Acts as a
+     * checkpoint so crash recovery can resume at the next unprocessed window.
+     */
+    private void publishWindowRecord(String sessionId, int windowIndex, List<DetectedEvent> events) {
+        if (eventPublisher == null) return;
+        eventPublisher.publishWindow(sessionId, windowIndex, events);
     }
 
     private String buildContext(StreamSession session, int currentWindow) {
@@ -341,8 +362,16 @@ public class StreamProcessingService {
             session.setWindows(windows);
             eventCallback.accept("{\"type\":\"progress\",\"message\":\"" + windows.size() + " windows to analyze\"}");
 
-            // Process all windows sequentially
-            for (int i = 0; i < windows.size(); i++) {
+            // Process all windows sequentially, skipping ahead if we recovered
+            // a checkpoint from Kafka (crash recovery).
+            int startWindow = session.getResumeFromWindow();
+            if (startWindow > 0) {
+                log.info("Resuming session {} from window {} (skipping {} previously-processed windows)",
+                        sessionId, startWindow, startWindow);
+                eventCallback.accept("{\"type\":\"progress\",\"message\":\"Resuming from window " +
+                        startWindow + "\"}");
+            }
+            for (int i = startWindow; i < windows.size(); i++) {
                 if (session.getStatus() != StreamSession.Status.RUNNING) break;
                 processWindow(sessionId, i, eventCallback);
             }
