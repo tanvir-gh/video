@@ -57,6 +57,27 @@ and verify the new row in `benchmark_runs` shows the improvement vs the previous
 - `ollama` running with `qwen3.5:9b` model pulled
 - Optional: `whisper` (pip install openai-whisper) if whisper-enabled=true
 
+## Docker
+
+Multi-stage Dockerfile builds a lean runtime image (~870MB) with Java 25 JRE,
+ffmpeg, and tesseract. Whisper is NOT included (disabled by default).
+Ollama and Postgres run on the host (or separate containers) and are reached
+via `host.docker.internal`.
+
+```bash
+# Build
+docker build -t video-detector:latest .
+
+# Run (pointing at host ollama + host postgres)
+docker run --rm \
+  --add-host=host.docker.internal:host-gateway \
+  -p 8080:8080 \
+  -e APP_OLLAMA_URL=http://host.docker.internal:11434/api/chat \
+  -e SPRING_DATASOURCE_URL=jdbc:postgresql://host.docker.internal:5432/mydatabase \
+  -v $(pwd)/samples/hls:/app/samples/hls \
+  video-detector:latest
+```
+
 ## SoccerNet Pipeline (offline batch)
 
 Python scripts in `scripts/` for sourcing real match footage:
