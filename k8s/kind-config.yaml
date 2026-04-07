@@ -1,0 +1,21 @@
+# kind cluster config for local dev.
+#
+# Key requirements:
+# - Pods must reach host services: ollama (11434), kafka (9092)
+# - Pods mount the host's samples/hls dir so stream URLs resolve to real files
+# - SQLite DB written to a host-mounted work dir so we can inspect results
+#
+# Network:
+# - kind runs its nodes as Docker containers on the 'kind' network
+# - Pods reach host via 'host.docker.internal' or the kind node's gateway IP
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: video-detector
+nodes:
+  - role: control-plane
+    extraMounts:
+      - hostPath: /home/tanvir/src/video/samples/hls
+        containerPath: /mnt/samples/hls
+      - hostPath: /home/tanvir/src/video/work
+        containerPath: /mnt/work

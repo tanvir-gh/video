@@ -1,0 +1,71 @@
+# KEDA ScaledJob: watches Kafka topic 'stream-requests' and creates
+# one k8s Job per message (max 5 concurrent).
+#
+# Each Job runs the video-detector container in Kafka consumer mode
+# (--pipeline.kafka), which polls for one message, processes the stream,
+# commits the offset, and exits.
+#
+# When no messages are pending, zero Jobs are running (true scale to zero).
+
+apiVersion: keda.sh/v1alpha1
+kind: ScaledJob
+metadata:
+  name: video-detector
+  namespace: default
+spec:
+  jobTargetRef:
+    parallelism: 1
+    completions: 1
+    activeDeadlineSeconds: 1800  # 30 min max per job
+    backoffLimit: 2
+    template:
+      spec:
+        restartPolicy: Never
+        containers:
+          - name: video-detector
+            image: video-detector:latest
+            imagePullPolicy: Never  # use image already loaded into kind
+            args:
+              - "--pipeline.kafka"
+              - "--spring.main.web-application-type=none"
+            env:
+              # Reach host services via the kind Docker network gateway
+              - name: APP_OLLAMA_URL
+                value: "http://172.18.0.1:11434/api/chat"
+              - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+                value: "172.18.0.1:9092"
+            volumeMounts:
+              - name: samples
+                mountPath: /app/samples/hls
+              - name: work
+                mountPath: /app/work
+            resources:
+              requests:
+                memory: "1Gi"
+                cpu: "500m"
+              limits:
+                memory: "2Gi"
+                cpu: "2"
+        volumes:
+          - name: samples
+            hostPath:
+              path: /mnt/samples/hls  # kind extraMount from host's samples/hls
+              type: Directory
+          - name: work
+            hostPath:
+              path: /mnt/work  # kind extraMount from host's work/
+              type: DirectoryOrCreate
+  pollingInterval: 5             # check Kafka lag every 5s
+  successfulJobsHistoryLimit: 5  # keep 5 completed Jobs for inspection
+  failedJobsHistoryLimit: 5
+  maxReplicaCount: 5             # max concurrent Jobs
+  scalingStrategy:
+    strategy: "default"
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: "172.18.0.1:9092"
+        consumerGroup: video-detector
+        topic: stream-requests
+        lagThreshold: "1"  # one message = one job
+        offsetResetPolicy: earliest

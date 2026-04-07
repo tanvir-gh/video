@@ -2,12 +2,18 @@ package com.tanvir.video;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.serialization.StringDeserializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -49,6 +55,9 @@ public class PipelineRunner implements ApplicationRunner {
     @Value("${app.hls-dir}")
     private String hlsDir;
 
+    @Value("${spring.kafka.bootstrap-servers:localhost:9092}")
+    private String kafkaBootstrapServers;
+
     public PipelineRunner(StreamProcessingService processingService,
                           DetectionProperties detectionProps,
                           OllamaProperties ollamaProps,
@@ -69,6 +78,50 @@ public class PipelineRunner implements ApplicationRunner {
             for (String input : inputs) {
                 processClip(input);
             }
+        } else if (args.containsOption("pipeline.kafka")) {
+            // Kafka consumer mode: read ONE message from 'stream-requests', process it, exit.
+            // This is what a KEDA-spawned Job pod runs.
+            logConfig();
+            consumeAndProcessOne();
+        }
+    }
+
+    /**
+     * Kafka consumer mode for KEDA ScaledJob pods.
+     * Reads one message from 'stream-requests', processes the stream, commits, exits.
+     */
+    private void consumeAndProcessOne() throws Exception {
+        Properties props = new Properties();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaBootstrapServers);
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "video-detector");
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+        props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "1");
+
+        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
+            consumer.subscribe(List.of("stream-requests"));
+            log.info("Kafka consumer subscribed to stream-requests, polling for one message...");
+
+            long deadline = System.currentTimeMillis() + 60_000;
+            while (System.currentTimeMillis() < deadline) {
+                ConsumerRecords<String, String> records = consumer.poll(Duration.ofSeconds(5));
+                if (records.isEmpty()) continue;
+
+                var record = records.iterator().next();
+                log.info("Received message: key={}, value={}", record.key(), record.value());
+
+                var node = objectMapper.readTree(record.value());
+                String url = node.get("url").asText();
+
+                processClip(url);
+
+                consumer.commitSync();
+                log.info("Committed offset, exiting.");
+                return;
+            }
+            log.warn("No messages received within 60s, exiting.");
         }
     }
 
