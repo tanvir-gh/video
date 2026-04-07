@@ -1,0 +1,10 @@
+spring:
+  datasource:
+    url: "jdbc:sqlite::memory:"
+    driver-class-name: org.sqlite.JDBC
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        dialect: org.hibernate.community.dialect.SQLiteDialect

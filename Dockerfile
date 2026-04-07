@@ -33,12 +33,11 @@ WORKDIR /app
 
 # Runtime config: ollama URL defaults to host.docker.internal so the
 # container can reach an ollama instance running on the host machine.
-# Override with OLLAMA_URL env var if needed.
-ENV APP_OLLAMA_URL="http://host.docker.internal:11434/api/chat" \
-    SPRING_DATASOURCE_URL="jdbc:postgresql://postgres:5432/mydatabase" \
-    SPRING_DOCKER_COMPOSE_ENABLED="false"
+# Override with APP_OLLAMA_URL env var if needed.
+ENV APP_OLLAMA_URL="http://host.docker.internal:11434/api/chat"
 
-# Persistent volumes: HLS output (served clips) and work dir (temp segments)
+# Persistent volumes: HLS output (served clips) and work dir
+# (temp segments + SQLite benchmarks.db)
 VOLUME ["/app/samples/hls", "/app/work"]
 
 # Copy fat jar from build stage

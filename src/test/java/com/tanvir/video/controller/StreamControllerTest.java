@@ -9,6 +9,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.tanvir.video.model.StreamSession;
 import com.tanvir.video.service.StreamProcessingService;
+import org.springframework.test.context.ActiveProfiles;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.when;
@@ -16,6 +17,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(StreamController.class)
+@ActiveProfiles("test")
 class StreamControllerTest {
 
     @Autowired

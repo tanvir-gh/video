@@ -38,13 +38,13 @@ Results are persisted to PostgreSQL `benchmark_runs` table automatically.
 # Benchmark all clips
 ./gradlew bootRun --args="--pipeline.benchmark --spring.main.web-application-type=none"
 
-# Query benchmark history (postgres runs in docker via compose)
-docker exec video-postgres-1 psql -U myuser -d mydatabase -c \
-  "SELECT id, clip_name, model, keyframe_count, keyframe_width, tp, fp, fn, ROUND(precision_score::numeric, 2) AS p, ROUND(recall_score::numeric, 2) AS r, ROUND(f1_score::numeric, 2) AS f1, ROUND(total_time_sec::numeric, 1) AS time_s, git_sha FROM benchmark_runs ORDER BY run_at DESC LIMIT 20;"
+# Query benchmark history (SQLite file in work/benchmarks.db)
+sqlite3 work/benchmarks.db \
+  "SELECT id, clip_name, model, keyframe_count, keyframe_width, tp, fp, fn, ROUND(precision_score, 2) AS p, ROUND(recall_score, 2) AS r, ROUND(f1_score, 2) AS f1, ROUND(total_time_sec, 1) AS time_s, git_sha FROM benchmark_runs ORDER BY run_at DESC LIMIT 20;"
 
 # Best F1 per clip
-docker exec video-postgres-1 psql -U myuser -d mydatabase -c \
-  "SELECT DISTINCT ON (clip_name) clip_name, model, keyframe_count, f1_score, git_sha FROM benchmark_runs ORDER BY clip_name, f1_score DESC, run_at DESC;"
+sqlite3 work/benchmarks.db \
+  "SELECT clip_name, MAX(f1_score) AS best_f1 FROM benchmark_runs GROUP BY clip_name;"
 ```
 
 **Workflow rule:** Before claiming a change improved the pipeline, run a benchmark
