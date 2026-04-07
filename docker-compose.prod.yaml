@@ -1,0 +1,51 @@
+# Production compose: runs the video-detector container + postgres.
+# Ollama is expected to run on the host (or as a separate service you add here).
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yaml up        # start
+#   docker compose -f docker-compose.prod.yaml up -d     # detached
+#   docker compose -f docker-compose.prod.yaml down      # stop
+#   docker compose -f docker-compose.prod.yaml logs -f video  # tail logs
+
+services:
+  postgres:
+    image: postgres:latest
+    environment:
+      POSTGRES_DB: mydatabase
+      POSTGRES_USER: myuser
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U myuser -d mydatabase"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  video:
+    image: video-detector:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # reach host ollama
+    environment:
+      APP_OLLAMA_URL: http://host.docker.internal:11434/api/chat
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/mydatabase
+      SPRING_DATASOURCE_USERNAME: myuser
+      SPRING_DATASOURCE_PASSWORD: secret
+      SPRING_DOCKER_COMPOSE_ENABLED: "false"
+    volumes:
+      - ./samples/hls:/app/samples/hls
+      - video_work:/app/work
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  video_work:

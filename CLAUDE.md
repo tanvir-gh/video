@@ -65,18 +65,21 @@ Ollama and Postgres run on the host (or separate containers) and are reached
 via `host.docker.internal`.
 
 ```bash
-# Build
-docker build -t video-detector:latest .
+# Start the full prod stack (postgres + video container)
+docker compose -f docker-compose.prod.yaml up -d
 
-# Run (pointing at host ollama + host postgres)
-docker run --rm \
-  --add-host=host.docker.internal:host-gateway \
-  -p 8080:8080 \
-  -e APP_OLLAMA_URL=http://host.docker.internal:11434/api/chat \
-  -e SPRING_DATASOURCE_URL=jdbc:postgresql://host.docker.internal:5432/mydatabase \
-  -v $(pwd)/samples/hls:/app/samples/hls \
-  video-detector:latest
+# Tail logs
+docker compose -f docker-compose.prod.yaml logs -f video
+
+# Stop
+docker compose -f docker-compose.prod.yaml down
+
+# Build the image only (without running)
+docker build -t video-detector:latest .
 ```
+
+Ollama must be running on the host (the container reaches it via
+`host.docker.internal:11434`). Postgres is managed by the compose file.
 
 ## SoccerNet Pipeline (offline batch)
 
