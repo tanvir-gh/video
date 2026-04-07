@@ -1,27 +1,56 @@
-# Runs the video-detector container. SQLite DB is stored in the work
-# volume. Ollama runs on the host (reached via host.docker.internal).
+# Local dev stack: video-detector + Kafka (KRaft mode, no Zookeeper).
+# SQLite DB in the work volume. Ollama runs on the host.
 #
 # Usage:
-#   docker compose up -d
+#   docker compose up -d                 # start everything
+#   docker compose up -d kafka           # just Kafka (when using kind for video)
 #   docker compose logs -f
 #   docker compose down
 
 services:
+  kafka:
+    image: confluentinc/cp-kafka:7.7.1
+    hostname: kafka
+    # Host networking so:
+    #   - kind containers can reach kafka at localhost:9092 via host.docker.internal
+    #   - dev apps on the host can reach kafka at localhost:9092
+    network_mode: host
+    environment:
+      # KRaft mode — no Zookeeper
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@localhost:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:9092"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    restart: unless-stopped
+
   video:
     image: video-detector:latest
     build:
       context: .
       dockerfile: Dockerfile
-    # Host networking: container shares host's network stack so it can
-    # reach ollama at 127.0.0.1:11434 regardless of ollama's bind address.
-    # App listens on host port 8080 directly (no -p needed).
+    # Host networking: reach ollama on localhost:11434 and kafka on localhost:9092
     network_mode: host
     environment:
       APP_OLLAMA_URL: http://127.0.0.1:11434/api/chat
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: 127.0.0.1:9092
     volumes:
       - ./samples/hls:/app/samples/hls
       - video_work:/app/work
+    depends_on:
+      - kafka
     restart: unless-stopped
 
 volumes:
   video_work:
+  kafka_data:
