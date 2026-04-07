@@ -34,7 +34,7 @@ public class StreamSession {
     private volatile int lastEventWindow = -10;
     private volatile int targetWindow = -1; // most recently requested window
 
-    public record WindowInfo(Path videoPath, Path audioPath, int index) {}
+    public record WindowInfo(Path videoPath, int index) {}
 
     public StreamSession(String id, String streamUrl) {
         this.id = id;

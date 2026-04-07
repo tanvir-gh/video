@@ -53,16 +53,12 @@ and verify the new row in `benchmark_runs` shows the improvement vs the previous
 ## Prerequisites
 
 - `ffmpeg` and `ffprobe` on PATH
-- `tesseract` on PATH
 - `ollama` running with `qwen3.5:9b` model pulled
-- Optional: `whisper` (pip install openai-whisper) if whisper-enabled=true
 
 ## Docker
 
-Multi-stage Dockerfile builds a lean runtime image (~870MB) with Java 25 JRE,
-ffmpeg, and tesseract. Whisper is NOT included (disabled by default).
-Ollama and Postgres run on the host (or separate containers) and are reached
-via `host.docker.internal`.
+Multi-stage Dockerfile builds a lean runtime image with Java 25 JRE and ffmpeg.
+Ollama runs on the host (reached via `host.docker.internal:11434`).
 
 ```bash
 # Start the video container
@@ -101,29 +97,31 @@ com.tanvir.video/
   PipelineRunner.java             — CLI mode (--pipeline.input=path)
   config/
     AsyncConfig.java              — virtual thread executor for async pipeline
-    DetectionProperties.java      — detection config (window size, keyframes, whisper)
+    DetectionProperties.java      — detection config (window size, keyframes, threshold)
     OllamaProperties.java         — ollama config (url, model, tokens, temperature)
     WebConfig.java                — HLS MIME types + resource handler
   controller/
     PlayerController.java         — serves player page, scans for master.m3u8 dirs
     StreamController.java         — REST (start/stop/status) + SSE live events
   service/
-    ClassifierService.java        — keyframe extraction, whisper (optional), ollama vision
-    ClipExtractorService.java     — ffmpeg stream copy for 30s event clips
+    ClassifierService.java        — keyframe extraction + ollama vision classification
+    ClipExtractorService.java     — ffmpeg re-encode for 30s event clips
     StreamProcessingService.java  — pipeline orchestrator (segment → classify → clip)
   model/
     StreamSession.java            — session state (thread-safe counters)
     DetectedEvent.java            — event record (type, confidence, timestamp, clip)
     ClassificationResult.java     — LLM response record
+    BenchmarkRun.java             — persisted benchmark row (JPA entity)
 ```
 
 ## Event Detection Pipeline
 
 1. **Segment** — ffmpeg splits stream into 30s `.ts` windows
-2. **Classify** — 3 keyframes (768px) extracted per window, sent to ollama qwen3.5:9b vision
-3. **Clip** — confirmed events (confidence >= 0.5) get 30s HLS clips via ffmpeg stream copy
+2. **Classify** — 10 keyframes (768px) per window extracted in a single ffmpeg pass,
+   sent to ollama qwen3.5:9b vision with context from prior windows
+3. **Clip** — confirmed events (confidence >= 0.5) get 30s HLS clips via ffmpeg re-encode
 
-No triage gate — every window goes through the LLM. ~6s per window at 768px = real-time capable.
+Every window goes through the LLM. ~17-20s per window at 768px = comfortably real-time.
 
 ## Configuration (application.yaml)
 
@@ -133,15 +131,12 @@ app:
   detection:
     window-duration: 30                  # seconds per analysis window
     confidence-threshold: 0.5            # minimum confidence to create clip
-    keyframe-count: 3                    # frames per window (3 = good balance)
-    keyframe-width: 768                  # px (512 too small, 1280 slow)
-    whisper-enabled: false               # set true to add audio transcript
-    whisper-model: base                  # tiny/base/small/medium
-    whisper-translate: true              # translate to English
-    work-dir: ${user.dir}/work           # temp files (segments, keyframes)
+    keyframe-count: 10                   # frames per window
+    keyframe-width: 768                  # px (512 too small for scoreboard)
+    work-dir: ${user.dir}/work           # temp files + SQLite benchmarks.db
   ollama:
     url: http://localhost:11434/api/chat
-    model: qwen3.5:9b                    # vision-capable model
+    model: qwen3.5:9b                    # vision-capable
     max-tokens: 500
     temperature: 0.1
 ```

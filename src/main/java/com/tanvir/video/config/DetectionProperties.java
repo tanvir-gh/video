@@ -8,8 +8,5 @@ public record DetectionProperties(
     double confidenceThreshold,
     int keyframeCount,
     int keyframeWidth,
-    boolean whisperEnabled,
-    String whisperModel,
-    boolean whisperTranslate,
     String workDir
 ) {}

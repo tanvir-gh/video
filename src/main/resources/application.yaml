@@ -27,9 +27,6 @@ app:
     confidence-threshold: 0.5
     keyframe-count: 10
     keyframe-width: 768
-    whisper-enabled: false
-    whisper-model: base
-    whisper-translate: true
     work-dir: ${user.dir}/work
   ollama:
     url: http://localhost:11434/api/chat

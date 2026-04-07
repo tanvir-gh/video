@@ -124,65 +124,17 @@ public class ClassifierService {
         return encoded;
     }
 
-    /**
-     * Optionally transcribe audio using Whisper, with auto-detected language.
-     */
-    public String transcribeAudio(Path audioPath) throws Exception {
-        if (!detectionProps.whisperEnabled()) {
-            return "";
-        }
-
-        log.info("Whisper: transcribing {} (model={})", audioPath.getFileName(), detectionProps.whisperModel());
-        long start = System.currentTimeMillis();
-
-        List<String> cmd = new ArrayList<>(List.of(
-                "whisper", audioPath.toString(),
-                "--model", detectionProps.whisperModel(),
-                "--output_format", "json",
-                "--output_dir", audioPath.getParent().toString()
-        ));
-        if (detectionProps.whisperTranslate()) {
-            cmd.add("--task");
-            cmd.add("translate");
-        }
-
-        ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.redirectErrorStream(true);
-        Process p = pb.start();
-        p.getInputStream().readAllBytes();
-        p.waitFor();
-
-        log.info("Whisper: completed in {}ms", System.currentTimeMillis() - start);
-
-        String baseName = audioPath.getFileName().toString().replaceFirst("\\.[^.]+$", "");
-        Path jsonPath = audioPath.getParent().resolve(baseName + ".json");
-
-        if (!jsonPath.toFile().exists()) {
-            log.warn("Whisper produced no output for {}", audioPath);
-            return "";
-        }
-
-        JsonNode root = objectMapper.readTree(jsonPath.toFile());
-        String language = root.has("language") ? root.get("language").asText() : "unknown";
-        String text = root.has("text") ? root.get("text").asText() : "";
-        log.info("Whisper: language={}, text={}", language,
-                text.substring(0, Math.min(80, text.length())));
-        return text;
-    }
-
-    public String buildPrompt(String transcript, String context) {
+    public String buildPrompt(String context) {
         return promptTemplate
-                .replace("{transcript}",
-                        transcript.isEmpty() ? "No commentary transcript available." : transcript)
                 .replace("{context}",
                         context.isEmpty() ? "This is the first window. No previous context." : context);
     }
 
     /**
-     * Classify a window using vision (keyframes) + optional transcript + context.
+     * Classify a window using vision keyframes + context from prior windows.
      */
-    public ClassificationResult classify(List<String> base64Frames, String transcript, String context) {
-        String prompt = buildPrompt(transcript, context);
+    public ClassificationResult classify(List<String> base64Frames, String context) {
+        String prompt = buildPrompt(context);
         return callOllama(prompt, base64Frames);
     }
 

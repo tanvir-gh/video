@@ -22,23 +22,21 @@ class ClassifierServiceTest {
 
     @BeforeEach
     void setUp() {
-        var detectionProps = new DetectionProperties(30, 0.7, 3, 512, false, "base", true, tempDir.toString());
+        var detectionProps = new DetectionProperties(30, 0.7, 3, 512, tempDir.toString());
         var ollamaProps = new OllamaProperties("http://localhost:11434/api/chat", "qwen3.5:9b", 200, 0.1);
         classifier = new ClassifierService(detectionProps, ollamaProps);
         classifier.loadPromptTemplate();
     }
 
     @Test
-    void buildPrompt_insertsTranscriptAndContext() {
-        String prompt = classifier.buildPrompt("The crowd goes wild!", "Window 0: no events");
-        assertTrue(prompt.contains("The crowd goes wild!"));
+    void buildPrompt_insertsContext() {
+        String prompt = classifier.buildPrompt("Window 0: no events");
         assertTrue(prompt.contains("Window 0: no events"));
     }
 
     @Test
-    void buildPrompt_handlesEmptyInputs() {
-        String prompt = classifier.buildPrompt("", "");
-        assertTrue(prompt.contains("No commentary transcript available."));
+    void buildPrompt_handlesEmptyContext() {
+        String prompt = classifier.buildPrompt("");
         assertTrue(prompt.contains("first window"));
     }
 
@@ -80,8 +78,7 @@ class ClassifierServiceTest {
     @Test
     void classify_withEmptyFrames_stillWorks() {
         // With no ollama running in test, this will fail gracefully
-        ClassificationResult result = classifier.classify(List.of(), "some transcript", "");
-        // Either returns events from LLM or empty on connection failure
+        ClassificationResult result = classifier.classify(List.of(), "");
         assertNotNull(result);
     }
 }

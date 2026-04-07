@@ -7,11 +7,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -24,53 +22,15 @@ import com.tanvir.video.service.StreamProcessingService;
 @RequestMapping("/api/streams")
 public class StreamController {
 
-    private static final String SUBMIT_TOPIC = "stream-requests";
-
     private final StreamProcessingService processingService;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Map<String, SseEmitter> emitters = new ConcurrentHashMap<>();
-
-    @Autowired(required = false)
-    private KafkaTemplate<String, String> kafkaTemplate;
 
     @Value("${app.hls-dir}")
     private String hlsDir;
 
     public StreamController(StreamProcessingService processingService) {
         this.processingService = processingService;
-    }
-
-    /**
-     * Submit a stream for async processing via Kafka. KEDA ScaledJob
-     * watches the 'stream-requests' topic and spawns a k8s Job per message.
-     */
-    @PostMapping("/submit")
-    public ResponseEntity<Map<String, Object>> submitStream(@RequestBody Map<String, String> request) {
-        if (kafkaTemplate == null) {
-            return ResponseEntity.status(503).body(Map.of("error", "Kafka not configured"));
-        }
-        String url = request.get("url");
-        if (url == null || url.isBlank()) {
-            return ResponseEntity.badRequest().body(Map.of("error", "url is required"));
-        }
-
-        String sessionId = java.util.UUID.randomUUID().toString().substring(0, 8);
-        String payload;
-        try {
-            payload = objectMapper.writeValueAsString(Map.of(
-                    "sessionId", sessionId,
-                    "url", url
-            ));
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
-        }
-
-        kafkaTemplate.send(SUBMIT_TOPIC, sessionId, payload);
-        return ResponseEntity.ok(Map.of(
-                "sessionId", sessionId,
-                "topic", SUBMIT_TOPIC,
-                "status", "QUEUED"
-        ));
     }
 
     @GetMapping("/ground-truth")

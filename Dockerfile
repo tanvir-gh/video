@@ -18,15 +18,9 @@ RUN ./gradlew --no-daemon bootJar -x test
 # ---- Stage 2: Runtime ----
 FROM eclipse-temurin:25-jre AS runtime
 
-# Install only what the pipeline actually uses at runtime
-# ffmpeg: segmentation + keyframe extraction
-# tesseract-ocr: legacy triage (unused in current pipeline but small)
-# Whisper is NOT installed — it's disabled by default. Enable via
-# a separate --whisper variant image if needed.
+# Pipeline only needs ffmpeg for segmentation + keyframe extraction.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        ffmpeg \
-        tesseract-ocr \
+    && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

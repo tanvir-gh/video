@@ -126,28 +126,11 @@ public class StreamProcessingService {
                     ffmpegOutput.substring(Math.max(0, ffmpegOutput.length() - 300)));
         }
 
-        boolean needAudio = props.whisperEnabled();
         List<StreamSession.WindowInfo> windows = new ArrayList<>();
         for (int i = 0; ; i++) {
             Path videoChunk = workDir.resolve(String.format("window_%03d.ts", i));
             if (!Files.exists(videoChunk)) break;
-
-            Path audioChunk = null;
-            if (needAudio) {
-                audioChunk = workDir.resolve(String.format("window_%03d.wav", i));
-                ProcessBuilder audioPb = new ProcessBuilder(
-                        "ffmpeg", "-y",
-                        "-i", videoChunk.toString(),
-                        "-vn", "-ar", "22050", "-ac", "1",
-                        audioChunk.toString()
-                );
-                audioPb.redirectErrorStream(true);
-                Process audioProc = audioPb.start();
-                audioProc.getInputStream().readAllBytes();
-                audioProc.waitFor();
-            }
-
-            windows.add(new StreamSession.WindowInfo(videoChunk, audioChunk, i));
+            windows.add(new StreamSession.WindowInfo(videoChunk, i));
         }
 
         log.info("Segmented into {} windows", windows.size());
@@ -198,19 +181,10 @@ public class StreamProcessingService {
             List<String> base64Frames = classifierService.encodeFrames(framePaths);
             long encodeMs = System.currentTimeMillis() - t1;
 
-            // Step 3: Optional whisper
-            long whisperMs = 0;
-            String transcript = "";
-            if (window.audioPath() != null) {
-                long t2 = System.currentTimeMillis();
-                transcript = classifierService.transcribeAudio(window.audioPath());
-                whisperMs = System.currentTimeMillis() - t2;
-            }
-
-            // Step 4: Build context + classify
+            // Step 3: Build context + classify
             String context = buildContext(session, windowIndex);
             long t3 = System.currentTimeMillis();
-            ClassificationResult classification = classifierService.classify(base64Frames, transcript, context);
+            ClassificationResult classification = classifierService.classify(base64Frames, context);
             long llmMs = System.currentTimeMillis() - t3;
 
             session.getWindowCache().put(windowIndex, classification);
@@ -218,8 +192,8 @@ public class StreamProcessingService {
 
             long windowElapsed = System.currentTimeMillis() - windowStart;
             long payloadKb = base64Frames.stream().mapToLong(String::length).sum() / 1024;
-            log.info("TIMING w{}: extract={}ms encode={}ms whisper={}ms llm={}ms TOTAL={}ms frames={} payload={}KB",
-                    windowIndex, extractMs, encodeMs, whisperMs, llmMs, windowElapsed,
+            log.info("TIMING w{}: extract={}ms encode={}ms llm={}ms TOTAL={}ms frames={} payload={}KB",
+                    windowIndex, extractMs, encodeMs, llmMs, windowElapsed,
                     framePaths.size(), payloadKb);
 
             // Update running context
@@ -270,7 +244,7 @@ public class StreamProcessingService {
 
                 DetectedEvent detected = new DetectedEvent(
                         event.type(), event.confidence(), event.description(),
-                        windowIndex, eventTime, slug, transcript);
+                        windowIndex, eventTime, slug);
                 session.addEvent(detected);
 
                 eventCallback.accept("{\"type\":\"event\",\"event\":\"" + event.type() +

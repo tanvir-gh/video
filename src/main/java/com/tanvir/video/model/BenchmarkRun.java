@@ -42,9 +42,6 @@ public class BenchmarkRun {
     @Column(name = "confidence_threshold")
     private Double confidenceThreshold;
 
-    @Column(name = "whisper_enabled")
-    private Boolean whisperEnabled;
-
     @Column(name = "tp")
     private Integer tp;
 
@@ -94,8 +91,6 @@ public class BenchmarkRun {
     public void setWindowDuration(Integer windowDuration) { this.windowDuration = windowDuration; }
     public Double getConfidenceThreshold() { return confidenceThreshold; }
     public void setConfidenceThreshold(Double confidenceThreshold) { this.confidenceThreshold = confidenceThreshold; }
-    public Boolean getWhisperEnabled() { return whisperEnabled; }
-    public void setWhisperEnabled(Boolean whisperEnabled) { this.whisperEnabled = whisperEnabled; }
     public Integer getTp() { return tp; }
     public void setTp(Integer tp) { this.tp = tp; }
     public Integer getFp() { return fp; }

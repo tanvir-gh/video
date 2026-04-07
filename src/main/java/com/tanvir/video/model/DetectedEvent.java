@@ -6,6 +6,5 @@ public record DetectedEvent(
     String description,
     int windowIndex,
     double timestampSec,
-    String clipPath,
-    String transcript
+    String clipPath
 ) {}

@@ -23,7 +23,7 @@ class StreamProcessingServiceTest {
     void setUp() {
         Path workDir = tempDir.resolve("work");
         Path hlsDir = tempDir.resolve("hls");
-        var detectionProps = new DetectionProperties(30, 0.7, 3, 512, false, "base", true, workDir.toString());
+        var detectionProps = new DetectionProperties(30, 0.7, 3, 512, workDir.toString());
         var ollamaProps = new OllamaProperties("http://localhost:11434/api/chat", "qwen3.5:9b", 200, 0.1);
 
         var classifierService = new ClassifierService(detectionProps, ollamaProps);

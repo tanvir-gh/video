@@ -14,8 +14,6 @@ Analyze these keyframes from a 30-second soccer broadcast window step by step.
 Previous window context:
 {context}
 
-Commentary transcript: {transcript}
-
 IMPORTANT: If the score is the SAME as the previous window, there was NO goal. Do not report a goal unless the score actually changed.
 
 For each detected event, provide:
