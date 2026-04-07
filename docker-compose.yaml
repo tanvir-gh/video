@@ -12,12 +12,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    ports:
-      - "8080:8080"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"  # reach host ollama
+    # Host networking: container shares host's network stack so it can
+    # reach ollama at 127.0.0.1:11434 regardless of ollama's bind address.
+    # App listens on host port 8080 directly (no -p needed).
+    network_mode: host
     environment:
-      APP_OLLAMA_URL: http://host.docker.internal:11434/api/chat
+      APP_OLLAMA_URL: http://127.0.0.1:11434/api/chat
     volumes:
       - ./samples/hls:/app/samples/hls
       - video_work:/app/work
