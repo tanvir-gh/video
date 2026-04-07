@@ -99,6 +99,11 @@ public class PipelineRunner implements ApplicationRunner {
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
         props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "1");
+        // We commit the offset before processing (at-most-once semantics) so
+        // session timeouts during the long processing phase don't matter for
+        // correctness. Just set reasonable values within broker limits.
+        props.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, "60000");
+        props.put(ConsumerConfig.HEARTBEAT_INTERVAL_MS_CONFIG, "20000");
 
         try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
             consumer.subscribe(List.of("stream-requests"));
@@ -112,13 +117,17 @@ public class PipelineRunner implements ApplicationRunner {
                 var record = records.iterator().next();
                 log.info("Received message: key={}, value={}", record.key(), record.value());
 
+                // Commit the offset IMMEDIATELY so even if processing crashes,
+                // KEDA won't re-deliver the same message. At-most-once semantics.
+                consumer.commitSync();
+                log.info("Committed offset, starting processing...");
+
                 var node = objectMapper.readTree(record.value());
                 String url = node.get("url").asText();
 
                 processClip(url);
 
-                consumer.commitSync();
-                log.info("Committed offset, exiting.");
+                log.info("Processing complete, exiting.");
                 return;
             }
             log.warn("No messages received within 60s, exiting.");

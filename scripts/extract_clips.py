@@ -94,17 +94,27 @@ def extract_clip(selection, slug, force=False):
 
 
 def clean(keep_test_videos=True):
-    """Remove all extracted clips, selections, and manifest. Never touches soccernet/."""
+    """Remove all extracted clips, selections, and manifest. Never touches soccernet/.
+    Uses docker if permission denied (k8s pods write as root via hostPath)."""
     import shutil
     if not HLS_DIR.exists():
         return
+    keep = {"blue30", "green45"} if keep_test_videos else set()
     for item in HLS_DIR.iterdir():
-        if keep_test_videos and item.name in ("blue30", "green45"):
+        if item.name in keep:
             continue
-        if item.is_dir():
-            shutil.rmtree(item)
-        else:
-            item.unlink()
+        try:
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+        except PermissionError:
+            # Fall back to docker-as-root to nuke the item
+            subprocess.run(
+                ["docker", "run", "--rm", "-v", f"{HLS_DIR}:/hls", "alpine",
+                 "rm", "-rf", f"/hls/{item.name}"],
+                check=False, capture_output=True,
+            )
     print("Cleaned samples/hls/ (kept test videos, preserved soccernet/)")
 
 
